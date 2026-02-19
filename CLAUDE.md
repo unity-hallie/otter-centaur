@@ -113,8 +113,10 @@ assign complex amplitudes (Euler factors) and ask about probabilities and
 interference. The Euler factor amplitudes and Born probabilities change
 between encodings; the causal geometry does not. This is where the gaps live:
 
-- **Gap 1** (open): The Euler factor amplitude is defined, not derived from
-  causal structure. Why this specific complex function?
+- **Gap 1** (partial): The Euler factor 1/(1-p^{-s}) is forced by
+  multiplicativity (FTA applied to functions) and self-similarity
+  (φ = 1 + p^{-s}·φ, the geometric series). What remains open: why
+  self-similar, and why σ = 1/2 (the critical line).
 - **Gap 2** (partial): Path interference. The path-sum decomposition produces
   genuine complex cross-terms. But the path-sum is not equal to the per-event
   amplitude (product form) used by `born_probabilities()`.

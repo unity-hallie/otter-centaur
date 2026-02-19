@@ -773,3 +773,45 @@ class TestFrameInvariance:
         for key, val in G.items():
             assert isinstance(val, int) and val >= 0, \
                 f"G[{key}] = {val} is not a non-negative integer"
+
+    def test_euler_factors_distinct_for_distinct_primes(self):
+        """Gauge theorem part (C): w_p(t) != w_q(t) for distinct primes, generic t."""
+        # This is proved by linear independence of cos(t ln p) and cos(t ln q)
+        # when ln(p)/ln(q) is irrational (which it is for distinct primes, by FTA).
+        # Here we verify numerically.
+        from otter.causal_calculus import _first_n_primes
+        test_primes = _first_n_primes(10)
+        for i, p in enumerate(test_primes):
+            for q in test_primes[i+1:]:
+                for t_int in range(1, 50):
+                    t = t_int * 0.1
+                    s = complex(0.5, t)
+                    wp = 1.0 / (1.0 - p ** (-s))
+                    wq = 1.0 / (1.0 - q ** (-s))
+                    assert abs(wp - wq) > 1e-10, \
+                        f"w_{p}({t}) = w_{q}({t}): gauge group not free"
+
+    def test_amplitudes_change_between_frames(self):
+        """Gauge theorem: same DAG, different primes → different Born probabilities."""
+        dag = _make_diamond()
+        enc0 = CausalEncoding(dag)
+        t = 3.0
+        probs0 = born_probabilities(enc0, t)
+
+        # Build a shifted encoding by constructing a new DAG with same structure
+        # but CausalEncoding will assign different primes if we pad with dummies
+        dag2 = CausalDAG()
+        dag2.add("pad1")  # consume prime 2
+        dag2.add("pad2")  # consume prime 3
+        dag2.add("pad3")  # consume prime 5
+        dag2.add("A")
+        dag2.add("B", causes=["A"])
+        dag2.add("C", causes=["A"])
+        dag2.add("D", causes=["B", "C"])
+        enc2 = CausalEncoding(dag2)
+        probs2 = born_probabilities(enc2, t)
+
+        # Probabilities should differ (different primes for same causal structure)
+        diffs = [abs(probs0[n] - probs2[n]) for n in ['A', 'B', 'C', 'D']]
+        assert max(diffs) > 0.01, \
+            "Expected different Born probabilities in different frames"
