@@ -27,7 +27,7 @@ Now arithmetic *is* causation:
 This is not a metaphor. It is the Fundamental Theorem of Arithmetic
 applied to causal structure. Every DAG gets a unique, injective encoding.
 The divisibility lattice of the natural numbers becomes a calculus of
-causation. See `domains/causal_encoding.py`, Property 6.
+causation. See `domains/causal_encoding.py`, Properties 6 and 8.
 
 ## Running
 
@@ -41,7 +41,7 @@ python -m otter --domain zeta            # Euler product convergence
 python -m otter --domain self-ref        # self-referential fixed point
 python -m otter --domain causal_encoding # Hilbert space + interference
 python -m otter --domain interactive     # human in the loop
-python -m pytest                         # 329 tests, ~6s
+python -m pytest                         # 349 tests, ~6s
 ```
 
 ## Design principles (SPICES)
@@ -103,11 +103,15 @@ Claude API as combine_fn).
 ## What is established and what is not
 
 The causal encoding (divisibility = causality) is proved by construction.
-It is the diamond-hard core of the project.
+It is the diamond-hard core of the project. The diamond-hard properties:
+exponents count paths (P6), inner products count correlated path pairs (P7),
+the cone angle converges to √((k-1)/k) (P8), and the Gram matrix is
+invariant under any prime assignment (P9). All proved, no gaps.
 
 On top of the encoding, `causal_encoding.py` explores what happens when you
 assign complex amplitudes (Euler factors) and ask about probabilities and
-interference. This is where the gaps live:
+interference. The Euler factor amplitudes and Born probabilities change
+between encodings; the causal geometry does not. This is where the gaps live:
 
 - **Gap 1** (open): The Euler factor amplitude is defined, not derived from
   causal structure. Why this specific complex function?

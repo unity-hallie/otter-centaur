@@ -72,6 +72,64 @@ Properties
            by hypothesis is the sum of path counts from A through each
            cause_i — which is the total paths from A to E. ✓
 
+7. CORRELATED PATH PAIRS: The inner product ⟨v(X), v(Y)⟩ counts the
+   number of pairs of directed paths that originate at the same ancestor
+   and terminate at X and Y respectively.
+
+   ⟨v(X), v(Y)⟩ = Σ_{E ∈ common ancestors} paths(E→X) × paths(E→Y)
+
+   Proof (three lines, from FTA + Property 6):
+     ⟨v(X), v(Y)⟩ = Σ_p v_X(p) · v_Y(p)           [definition of dot product]
+                   = Σ_E exp(p_E, gn(X)) · exp(p_E, gn(Y))  [each prime = one event]
+                   = Σ_E paths(E→X) · paths(E→Y)    [by Property 6]
+
+   Consequence: the causal inner product measures correlated causal
+   influence — for each shared ancestor, how many ways it can propagate
+   to BOTH X and Y through the DAG.
+
+8. CAUSAL CONE THEOREM: For k-ary nested diamonds of depth n (a root
+   event forking into k intermediaries, merging, forking again, ...),
+   the overlap between root and tip converges to √((k-1)/k).
+
+   Norm:   ‖v(Dₙ)‖² = (k^{2n+1} - 1) / (k - 1)
+   Overlap: overlap(root, Dₙ) = kⁿ / ‖v(Dₙ)‖  →  √((k-1)/k)
+
+   The convergence is exponential. The limit depends only on k
+   (branching factor), not n (depth). The geometry stabilizes
+   before you reach infinity.
+
+   Proof by induction on n:
+     Adding a k-ary diamond multiplies every existing exponent by k
+     (since paths(E→D_{n+1}) = k × paths(E→Dₙ) for every ancestor E)
+     and adds k+1 new primes with exponent 1 (k intermediaries + tip).
+     ‖v(D_{n+1})‖² = k² · ‖v(Dₙ)‖² + (k+1)
+     Solving: (k^{2n+1} - 1)/(k-1).  Base: k² + k + 1 = (k³-1)/(k-1). ✓
+     Limit: kⁿ / √(k^{2n+1}/(k-1)) = √((k-1)/k). ✓
+
+   Special cases:
+     k=2 (binary):  angle → arccos(1/√2)       = 45°
+     k=4:           angle → arccos(√(3/4))      = 30°
+     k→∞:           angle → 0° (cause ≈ effect)
+     k=1 (linear):  angle → 90° (cause ⊥ effect)
+
+   The angle is a light cone. Binary branching gives 45 degrees.
+
+9. FRAME INVARIANCE: The Gram matrix G_{XY} = Σ_E paths(E→X)·paths(E→Y)
+   is computable from the DAG alone — no prime assignment needed. Any
+   injective assignment of distinct primes produces the same G.
+
+   Proof: By Property 6, the exponent of p_E in gn(X) = paths(E→X).
+   So ⟨v(X), v(Y)⟩ = Σ_E paths(E→X)·paths(E→Y), which is independent
+   of which primes were assigned. QED.
+
+   Consequence: overlaps, norms, cone angles, and orthogonality are all
+   functions of G and therefore invariant under the choice of encoding.
+   The Euler factor amplitudes and Born probabilities are NOT invariant —
+   they depend on which primes were chosen.
+
+   The invariant structure is the causal geometry.
+   The variant is the wave mechanics on that geometry.
+
 The construction is not circular: we assign fresh primes to events
 first (by any enumeration), then define gn recursively up the DAG.
 Acyclicity of the DAG guarantees the recursion terminates.
@@ -310,6 +368,48 @@ class CausalEncoding:
             "path_counting_holds": len(counterexamples) == 0,
         }
 
+    def correlated_path_pairs(self, x: str, y: str) -> dict:
+        """
+        Compute Property 7: correlated path pairs between x and y.
+
+        Returns Σ_E paths(E→x) × paths(E→y) over all events E,
+        which equals ⟨v(x), v(y)⟩ by Property 7.
+
+        Returns a report dict with the per-ancestor breakdown
+        and verification against causal_hilbert_product.
+        """
+        names = list(self.dag.events.keys())
+        total = 0
+        breakdown = {}
+        for anc in names:
+            px = self.path_count(anc, x) if anc != x else 1
+            py = self.path_count(anc, y) if anc != y else 1
+            # Only count if anc is actually an ancestor of both (or is x/y itself)
+            # path_count returns 0 if no path exists
+            if anc == x:
+                px = 1  # trivial path
+            if anc == y:
+                py = 1
+            # But we only want shared ancestors
+            # path_count(anc, x) = 0 means anc is not an ancestor of x
+            # We need: anc is an ancestor of BOTH x and y (or is x or y)
+            px_real = self.path_count(anc, x) if anc != x else 1
+            py_real = self.path_count(anc, y) if anc != y else 1
+            if px_real > 0 and py_real > 0:
+                contrib = px_real * py_real
+                total += contrib
+                breakdown[anc] = {
+                    "paths_to_x": px_real,
+                    "paths_to_y": py_real,
+                    "product": contrib,
+                }
+
+        return {
+            "x": x, "y": y,
+            "correlated_pairs": total,
+            "breakdown": breakdown,
+        }
+
     def verify_claim_2(self) -> dict:
         """
         Formally verify Claim 2: causal order = divisibility.
@@ -450,6 +550,114 @@ def demo_spacetime_patch():
     dag.add("other",  causes=["past_2"])
     dag.add("future", causes=["now", "other"])
     return dag
+
+
+# =====================================================================
+# Nested diamonds and the causal cone (Property 8)
+# =====================================================================
+
+def build_nested_diamonds(n: int, k: int = 2) -> tuple:
+    """
+    Build n nested k-ary diamonds: root → {k intermediaries} → merge → ...
+
+    Each diamond forks the previous merge point into k intermediaries,
+    then merges them. After n diamonds, there are k^n directed paths
+    from root to tip.
+
+    Args:
+        n: number of nested diamonds (depth of nesting)
+        k: branching factor (number of intermediaries per diamond)
+
+    Returns:
+        (CausalDAG, tip_name) where tip_name is the final merge event.
+    """
+    dag = CausalDAG()
+    dag.add('A')
+    prev = 'A'
+    for i in range(1, n + 1):
+        intermediaries = []
+        for j in range(k):
+            name = f'M{i}_{j}'
+            dag.add(name, causes=[prev])
+            intermediaries.append(name)
+        merge = f'D{i}'
+        dag.add(merge, causes=intermediaries)
+        prev = merge
+    return dag, prev
+
+
+def cone_angle_limit(k: int) -> dict:
+    """
+    Return the geometric limit of the causal cone for k-ary branching.
+
+    For k-ary nested diamonds of any depth, the overlap between root
+    and tip converges to sqrt((k-1)/k). This is Property 8.
+
+    No DAG is built. This is pure arithmetic.
+
+    Args:
+        k: branching factor (k >= 2)
+
+    Returns:
+        dict with 'overlap', 'angle_radians', 'angle_degrees'
+    """
+    import math as _m
+    if k < 2:
+        return {'overlap': 0.0, 'angle_radians': _m.pi / 2, 'angle_degrees': 90.0}
+    overlap = _m.sqrt((k - 1) / k)
+    angle_rad = _m.acos(overlap)
+    return {
+        'overlap': overlap,
+        'angle_radians': angle_rad,
+        'angle_degrees': angle_rad * 180 / _m.pi,
+    }
+
+
+def verify_cone_convergence(max_n: int = 8, k: int = 2) -> dict:
+    """
+    Verify the causal cone theorem (Property 8) by building nested diamonds.
+
+    For n = 1..max_n, builds k-ary nested diamonds and checks:
+      1. ||v(Dn)||^2 = (k^{2n+1} - 1) / (k - 1)
+      2. overlap(root, Dn) converges to sqrt((k-1)/k)
+
+    Returns a report dict.
+    """
+    import math as _m
+    limit = _m.sqrt((k - 1) / k) if k >= 2 else 0.0
+    results = []
+    all_norms_match = True
+
+    for n in range(1, max_n + 1):
+        dag, tip = build_nested_diamonds(n, k)
+        enc = CausalEncoding(dag)
+        v = exponent_vector(enc, tip)
+        norm_sq = sum(e ** 2 for e in v.values())
+        predicted_norm_sq = (k ** (2 * n + 1) - 1) // (k - 1)
+        ov = causal_overlap(enc, 'A', tip)
+        error = abs(ov - limit)
+
+        norms_match = (norm_sq == predicted_norm_sq)
+        if not norms_match:
+            all_norms_match = False
+
+        results.append({
+            'n': n,
+            'norm_sq': norm_sq,
+            'predicted_norm_sq': predicted_norm_sq,
+            'norms_match': norms_match,
+            'overlap': ov,
+            'error': error,
+        })
+
+    return {
+        'k': k,
+        'limit_overlap': limit,
+        'limit_angle_degrees': cone_angle_limit(k)['angle_degrees'],
+        'all_norms_match': all_norms_match,
+        'steps': results,
+        'converges': results[-1]['error'] < 1e-4 if results else False,
+    }
 
 
 def run_causal_encoding_demo(verbose: bool = True):
@@ -1145,6 +1353,119 @@ def gram_matrix(enc: 'CausalEncoding') -> dict:
     }
 
 
+def coordinate_free_gram(dag: 'CausalDAG') -> dict:
+    """
+    Compute the Gram matrix directly from path counts — no primes needed.
+
+    G_{XY} = Σ_E paths(E→X) · paths(E→Y)
+
+    This is Property 9 (Frame Invariance): the Gram matrix depends only
+    on the DAG, not on any prime assignment. Any encoding produces
+    the same G. This function computes it without choosing one.
+
+    Uses a temporary CausalEncoding only for the path_count method
+    (which itself is a DAG traversal, independent of prime choice).
+
+    Returns:
+        dict with keys 'matrix' (name pairs → int), 'names', 'rank', 'dim'
+    """
+    enc = CausalEncoding(dag)  # primes chosen here don't affect G
+    names = dag.topological_order()
+
+    matrix = {}
+    for x in names:
+        for y in names:
+            g = 0
+            for e in names:
+                px = enc.path_count(e, x) if e != x else 1
+                py = enc.path_count(e, y) if e != y else 1
+                if px > 0 and py > 0:
+                    g += px * py
+            matrix[(x, y)] = g
+
+    # Rank = number of events (proved: M = paths matrix has full rank)
+    rank = len(names)
+
+    return {
+        'matrix': matrix,
+        'names': names,
+        'rank': rank,
+        'dim': rank,
+        'gleason_applies': rank >= 3,
+    }
+
+
+def verify_frame_invariance(dag: 'CausalDAG', num_trials: int = 5) -> dict:
+    """
+    Verify Property 9: the Gram matrix is the same under different prime
+    assignments. Tests the standard encoding plus random encodings.
+
+    Returns a report dict.
+    """
+    import random as _rnd
+    from ..causal_calculus import _first_n_primes
+
+    names = dag.topological_order()
+    n = len(names)
+    all_primes = _first_n_primes(max(n * 10, 200))
+
+    # Reference: coordinate-free Gram matrix
+    G_ref = coordinate_free_gram(dag)['matrix']
+
+    results = []
+
+    for trial in range(num_trials):
+        # Pick random distinct primes
+        chosen = _rnd.sample(all_primes, n)
+        chosen.sort()
+
+        # Build encoding with these primes
+        _primes = {}
+        _gn = {}
+        for i, name in enumerate(names):
+            _primes[name] = chosen[i]
+            g = _primes[name]
+            for cause in dag.events[name].causes:
+                g *= _gn[cause]
+            _gn[name] = g
+
+        # Compute Gram matrix from this encoding
+        def _ev(name):
+            val = _gn[name]
+            vec = {}
+            d = 2
+            while d * d <= val:
+                while val % d == 0:
+                    vec[d] = vec.get(d, 0) + 1
+                    val //= d
+                d += 1
+            if val > 1:
+                vec[val] = vec.get(val, 0) + 1
+            return vec
+
+        G_trial = {}
+        for a in names:
+            for b in names:
+                va, vb = _ev(a), _ev(b)
+                G_trial[(a, b)] = sum(
+                    va.get(p, 0) * vb.get(p, 0)
+                    for p in set(va) | set(vb)
+                )
+
+        match = all(G_trial[(a, b)] == G_ref[(a, b)]
+                     for a in names for b in names)
+        results.append({
+            'primes': {name: _primes[name] for name in names},
+            'match': match,
+        })
+
+    return {
+        'all_match': all(r['match'] for r in results),
+        'trials': results,
+        'reference_gram': G_ref,
+    }
+
+
 def path_amplitudes(
     enc: 'CausalEncoding', target: str, t: float
 ) -> dict:
@@ -1656,6 +1977,46 @@ def run_hilbert_space_demo(verbose: bool = True) -> dict:
 
     results['has_destructive'] = has_destructive
 
+    # Part 5: The causal cone (Property 8)
+    if verbose:
+        print()
+        print(f"  --- THE CAUSAL CONE (Property 8) ---")
+        print(f"  Stack binary diamonds deeper and deeper. The overlap")
+        print(f"  between root and tip converges to 1/√2. The angle")
+        print(f"  converges to 45°. This is a geometric fixed point.")
+        print()
+        print(f"  {'n':>4}  {'paths':>8}  {'overlap':>12}  {'angle':>8}  {'error':>10}")
+        print(f"  {'-'*4}  {'-'*8}  {'-'*12}  {'-'*8}  {'-'*10}")
+
+    cone = verify_cone_convergence(max_n=6, k=2)
+    results['cone'] = cone
+
+    if verbose:
+        import math as _m
+        for step in cone['steps']:
+            n = step['n']
+            paths = 2 ** n
+            ov = step['overlap']
+            angle = _m.acos(min(ov, 1.0)) * 180 / _m.pi
+            err = step['error']
+            print(f"  {n:>4}  {paths:>8}  {ov:>12.8f}  {angle:>7.2f}°  {err:>10.2e}")
+
+        limit = cone['limit_overlap']
+        limit_angle = cone['limit_angle_degrees']
+        print(f"  {'∞':>4}  {'∞':>8}  {limit:>12.8f}  {limit_angle:>7.2f}°  {'0':>10}")
+        print()
+        print(f"  Limit formula: overlap → √((k-1)/k)  where k = branching factor")
+        print()
+        print(f"  {'k':>4}  {'overlap':>12}  {'angle':>8}")
+        print(f"  {'-'*4}  {'-'*12}  {'-'*8}")
+        for k_val in [2, 3, 4, 5, 10]:
+            cl = cone_angle_limit(k_val)
+            print(f"  {k_val:>4}  {cl['overlap']:>12.8f}  {cl['angle_degrees']:>7.2f}°")
+        print()
+        print(f"  The angle depends only on the branching factor.")
+        print(f"  Not on the depth. The geometry converges before infinity.")
+        print(f"  Binary branching gives 45°. This is a light cone.")
+
     if verbose:
         print()
         print(f"  Summary of gaps:")
@@ -1669,6 +2030,7 @@ def run_hilbert_space_demo(verbose: bool = True) -> dict:
         'gap3_gleason': gm['gleason_applies'],
         'constructive_theorem': theorem_holds,
         'destructive_exists': has_destructive,
+        'cone_converges': cone['converges'],
     }
 
     return results

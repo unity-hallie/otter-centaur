@@ -28,6 +28,11 @@ from otter.domains.causal_encoding import (
     demo_linear_chain,
     demo_diamond,
     demo_spacetime_patch,
+    build_nested_diamonds,
+    cone_angle_limit,
+    verify_cone_convergence,
+    coordinate_free_gram,
+    verify_frame_invariance,
     causal_amplitude,
     born_probabilities,
     exponent_vector,
@@ -585,3 +590,186 @@ class TestPathCounting:
             result = enc.verify_path_counting()
             assert result["path_counting_holds"], \
                 f"Path counting failed on {maker.__name__}: {result['counterexamples']}"
+
+
+# -- Property 7: Correlated path pairs -----------------------------------
+
+class TestCorrelatedPaths:
+    """
+    Property 7: <v(X), v(Y)> = Σ_E paths(E→X) × paths(E→Y)
+    The inner product counts correlated causal path pairs.
+    """
+
+    def test_property_7_diamond(self):
+        """On the diamond DAG, verify <v(A),v(D)> = Σ paths(E→A)*paths(E→D)."""
+        dag = _make_diamond()
+        enc = CausalEncoding(dag)
+        report = enc.correlated_path_pairs('A', 'D')
+        ip = causal_hilbert_product(enc, 'A', 'D')
+        assert report['correlated_pairs'] == ip
+
+    @pytest.mark.parametrize("dag_factory", [
+        _make_linear, _make_diamond, _make_spacetime,
+    ])
+    def test_property_7_all_pairs(self, dag_factory):
+        """For every pair in every demo DAG, correlated_path_pairs == inner product."""
+        dag = dag_factory()
+        enc = CausalEncoding(dag)
+        names = list(dag.events.keys())
+        for x in names:
+            for y in names:
+                report = enc.correlated_path_pairs(x, y)
+                ip = causal_hilbert_product(enc, x, y)
+                assert report['correlated_pairs'] == ip, \
+                    f"Property 7 failed for ({x},{y}): {report['correlated_pairs']} != {ip}"
+
+    def test_from_root_equals_path_count(self):
+        """When one argument is a root (single prime), ip = path count."""
+        dag = _make_diamond()
+        enc = CausalEncoding(dag)
+        # A is a root: v(A) = {p_A: 1}, so <v(A), v(X)> = exp of p_A in gn(X) = paths(A→X)
+        for name in dag.topological_order():
+            ip = causal_hilbert_product(enc, 'A', name)
+            pc = enc.path_count('A', name) if name != 'A' else 1
+            assert ip == pc, f"<v(A),v({name})> = {ip} but paths(A→{name}) = {pc}"
+
+    def test_bipartite_fork(self):
+        """Property 7 on a wider DAG: A → {B,C,D} → E."""
+        dag = CausalDAG()
+        dag.add('A')
+        dag.add('B', causes=['A'])
+        dag.add('C', causes=['A'])
+        dag.add('D', causes=['A'])
+        dag.add('E', causes=['B', 'C', 'D'])
+        enc = CausalEncoding(dag)
+        # <v(A), v(E)> should equal 3 (3 paths from A to E)
+        ip = causal_hilbert_product(enc, 'A', 'E')
+        assert ip == 3
+        report = enc.correlated_path_pairs('A', 'E')
+        assert report['correlated_pairs'] == 3
+
+
+# -- Property 8: The causal cone -----------------------------------------
+
+class TestCausalCone:
+    """
+    Property 8: For k-ary nested diamonds, overlap(root, tip) → √((k-1)/k).
+    The geometry converges to a fixed angle. Binary gives 45°.
+    """
+
+    def test_nested_diamond_norm_formula(self):
+        """||v(Dn)||^2 = (2^{2n+1} - 1) for binary diamonds."""
+        for n in range(1, 7):
+            dag, tip = build_nested_diamonds(n, k=2)
+            enc = CausalEncoding(dag)
+            v = exponent_vector(enc, tip)
+            norm_sq = sum(e ** 2 for e in v.values())
+            predicted = (2 ** (2 * n + 1) - 1) // (2 - 1)
+            assert norm_sq == predicted, \
+                f"n={n}: ||v||^2={norm_sq} but expected {predicted}"
+
+    def test_nested_diamond_overlap_converges(self):
+        """Overlap converges to 1/sqrt(2) for binary diamonds."""
+        limit = 1.0 / math.sqrt(2)
+        dag, tip = build_nested_diamonds(8, k=2)
+        enc = CausalEncoding(dag)
+        ov = causal_overlap(enc, 'A', tip)
+        assert ov == approx(limit, abs=1e-4)
+
+    def test_cone_angle_limit_binary(self):
+        """cone_angle_limit(2) gives 45 degrees."""
+        cl = cone_angle_limit(2)
+        assert cl['angle_degrees'] == approx(45.0, abs=0.01)
+        assert cl['overlap'] == approx(1.0 / math.sqrt(2), abs=1e-10)
+
+    def test_cone_angle_limit_general(self):
+        """General k-ary limits match √((k-1)/k)."""
+        for k in [3, 4, 5, 10]:
+            cl = cone_angle_limit(k)
+            expected = math.sqrt((k - 1) / k)
+            assert cl['overlap'] == approx(expected, abs=1e-10), \
+                f"k={k}: expected {expected}, got {cl['overlap']}"
+
+    def test_kary_nested_diamonds_norm(self):
+        """Norm formula works for k=3 (ternary diamonds)."""
+        k = 3
+        for n in range(1, 5):
+            dag, tip = build_nested_diamonds(n, k=k)
+            enc = CausalEncoding(dag)
+            v = exponent_vector(enc, tip)
+            norm_sq = sum(e ** 2 for e in v.values())
+            predicted = (k ** (2 * n + 1) - 1) // (k - 1)
+            assert norm_sq == predicted, \
+                f"k={k}, n={n}: ||v||^2={norm_sq} but expected {predicted}"
+
+    def test_verify_cone_convergence(self):
+        """Full convergence verification via verify_cone_convergence."""
+        report = verify_cone_convergence(max_n=6, k=2)
+        assert report['all_norms_match']
+        assert report['converges']
+        assert report['limit_angle_degrees'] == approx(45.0, abs=0.01)
+
+    def test_path_count_doubling(self):
+        """Each diamond nesting doubles the path count for binary."""
+        for n in range(1, 7):
+            dag, tip = build_nested_diamonds(n, k=2)
+            enc = CausalEncoding(dag)
+            paths = enc.path_count('A', tip)
+            assert paths == 2 ** n, f"n={n}: expected 2^{n}={2**n} paths, got {paths}"
+
+
+# -- Property 9: Frame invariance -----------------------------------------
+
+class TestFrameInvariance:
+    """
+    Property 9: The Gram matrix G_{XY} = Σ_E paths(E→X)·paths(E→Y)
+    is computable from the DAG alone and is invariant under any prime assignment.
+    """
+
+    def test_coordinate_free_gram_matches_encoded(self):
+        """The coordinate-free Gram matrix matches the one from any encoding."""
+        dag = _make_diamond()
+        enc = CausalEncoding(dag)
+        names = dag.topological_order()
+
+        G_free = coordinate_free_gram(dag)['matrix']
+        G_enc = gram_matrix(enc)['matrix']
+
+        for a in names:
+            for b in names:
+                assert G_free[(a, b)] == G_enc[(a, b)], \
+                    f"Mismatch at ({a},{b}): free={G_free[(a,b)]}, enc={G_enc[(a,b)]}"
+
+    @pytest.mark.parametrize("dag_factory", [
+        _make_linear, _make_diamond, _make_spacetime,
+    ])
+    def test_frame_invariance(self, dag_factory):
+        """Random prime assignments all produce the same Gram matrix."""
+        dag = dag_factory()
+        report = verify_frame_invariance(dag, num_trials=5)
+        assert report['all_match'], \
+            f"Frame invariance failed on {dag_factory.__name__}"
+
+    def test_coordinate_free_gram_full_rank(self):
+        """The Gram matrix has full rank (= number of events)."""
+        for dag_factory in [_make_linear, _make_diamond, _make_spacetime]:
+            dag = dag_factory()
+            G = coordinate_free_gram(dag)
+            assert G['rank'] == len(dag.events)
+
+    def test_coordinate_free_gram_symmetric(self):
+        """The coordinate-free Gram matrix is symmetric."""
+        dag = _make_diamond()
+        G = coordinate_free_gram(dag)['matrix']
+        names = dag.topological_order()
+        for a in names:
+            for b in names:
+                assert G[(a, b)] == G[(b, a)]
+
+    def test_coordinate_free_gram_integer_entries(self):
+        """All entries of the Gram matrix are non-negative integers."""
+        dag = _make_diamond()
+        G = coordinate_free_gram(dag)['matrix']
+        for key, val in G.items():
+            assert isinstance(val, int) and val >= 0, \
+                f"G[{key}] = {val} is not a non-negative integer"
