@@ -23,7 +23,6 @@ Then:
 - **Downstream join?** `lcm(gn(A), gn(B))`.
 
 This is the Fundamental Theorem of Arithmetic applied to causal structure.
-It is not a metaphor.
 
 Some things that fall out of it, which we did not go looking for:
 
