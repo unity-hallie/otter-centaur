@@ -499,3 +499,89 @@ class TestDeepForkDestructiveInterference:
         # Each path should have 2 unique primes (B,C or D,E)
         for _, unique_primes, _ in result['path_unique']:
             assert len(unique_primes) == 2
+
+
+# -- The Easter Egg: exponents count paths ----------------------------------
+
+class TestPathCounting:
+    """
+    Property 6: the exponent of p_A in gn(E) equals the number of
+    directed paths from A to E.
+
+    Nobody asked for this. The encoding was designed so that divisibility
+    tracks causality. But the exponents count paths for free.
+    """
+
+    def test_diamond_two_paths(self):
+        """A→B→D and A→C→D: exponent of p_A in gn(D) should be 2."""
+        dag = _make_diamond()
+        enc = CausalEncoding(dag)
+        p_A = enc.fresh_prime("A")
+        gn_D = enc.gn("D")
+        exp = 0
+        n = gn_D
+        while n % p_A == 0:
+            n //= p_A
+            exp += 1
+        assert exp == 2
+
+    def test_triple_merge_three_paths(self):
+        """A→B, A→C, A→D, all→E: 3 paths from A to E."""
+        dag = CausalDAG()
+        dag.add('A')
+        dag.add('B', causes=['A'])
+        dag.add('C', causes=['A'])
+        dag.add('D', causes=['A'])
+        dag.add('E', causes=['B', 'C', 'D'])
+        enc = CausalEncoding(dag)
+        p_A = enc.fresh_prime("A")
+        gn_E = enc.gn("E")
+        exp = 0
+        n = gn_E
+        while n % p_A == 0:
+            n //= p_A
+            exp += 1
+        assert exp == 3
+
+    def test_double_diamond_four_paths(self):
+        """Double diamond: 4 paths from A to F."""
+        dag = CausalDAG()
+        dag.add('A')
+        dag.add('B', causes=['A'])
+        dag.add('C', causes=['A'])
+        dag.add('D', causes=['B', 'C'])
+        dag.add('E', causes=['B', 'C'])
+        dag.add('F', causes=['D', 'E'])
+        enc = CausalEncoding(dag)
+        p_A = enc.fresh_prime("A")
+        gn_F = enc.gn("F")
+        exp = 0
+        n = gn_F
+        while n % p_A == 0:
+            n //= p_A
+            exp += 1
+        assert exp == 4
+
+    def test_linear_chain_always_one_path(self):
+        """In a linear chain, every ancestor has exactly 1 path to every descendant."""
+        dag = _make_linear()
+        enc = CausalEncoding(dag)
+        names = dag.topological_order()
+        for i, anc in enumerate(names):
+            for desc in names[i+1:]:
+                p = enc.fresh_prime(anc)
+                n = enc.gn(desc)
+                exp = 0
+                while n % p == 0:
+                    n //= p
+                    exp += 1
+                assert exp == 1, f"Expected 1 path {anc}→{desc}, got exponent {exp}"
+
+    def test_verify_path_counting_all_dags(self):
+        """Run the full verification on every demo DAG."""
+        for maker in [_make_linear, _make_diamond, _make_spacetime]:
+            dag = maker()
+            enc = CausalEncoding(dag)
+            result = enc.verify_path_counting()
+            assert result["path_counting_holds"], \
+                f"Path counting failed on {maker.__name__}: {result['counterexamples']}"

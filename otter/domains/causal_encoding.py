@@ -57,6 +57,21 @@ Properties
 5. CONSISTENCY WITH DIVISIBILITY LATTICE: The image of gn in N forms
    a sublattice of (N, |) isomorphic to the causal DAG's ideal lattice.
 
+6. PATH COUNTING (the easter egg): The exponent of p_A in gn(E) equals
+   the number of directed paths from A to E in the DAG.
+
+   Nobody asked for this. The encoding was designed so that divisibility
+   tracks causality. But the exponents count paths. It falls out of the
+   multiplicative structure for free.
+
+   Proof by induction on DAG depth:
+     Base: A is a direct cause of E. Then gn(E) = p_E * gn(A) * ...
+           and p_A appears with exponent 1. There is 1 path. ✓
+     Step: gn(E) = p_E * ∏ gn(cause_i). The exponent of p_A in gn(E)
+           is the sum of exponents of p_A in each gn(cause_i), which
+           by hypothesis is the sum of path counts from A through each
+           cause_i — which is the total paths from A to E. ✓
+
 The construction is not circular: we assign fresh primes to events
 first (by any enumeration), then define gn recursively up the DAG.
 Acyclicity of the DAG guarantees the recursion terminates.
@@ -238,6 +253,62 @@ class CausalEncoding:
         from math import gcd
         ga, gb = self._gn[a], self._gn[b]
         return ga * gb // gcd(ga, gb)
+
+    def path_count(self, ancestor: str, descendant: str) -> int:
+        """
+        Count directed paths from ancestor to descendant in the DAG.
+
+        This equals the exponent of fresh_prime(ancestor) in gn(descendant).
+        See Property 6 (the easter egg) in the module docstring.
+        """
+        if ancestor == descendant:
+            return 1
+        total = 0
+        for child in self.dag.children(ancestor):
+            total += self.path_count(child.name, descendant)
+        return total
+
+    def verify_path_counting(self) -> dict:
+        """
+        Verify Property 6: exponent of p_A in gn(E) = number of paths A→E.
+
+        Checks every (ancestor, descendant) pair in the DAG.
+        Returns a report dict.
+        """
+        names = list(self.dag.events.keys())
+        total = 0
+        verified = 0
+        counterexamples = []
+
+        for anc in names:
+            for desc in names:
+                if anc == desc:
+                    continue
+                paths = self.path_count(anc, desc)
+                if paths == 0:
+                    continue
+                total += 1
+                # Count exponent of fresh_prime(anc) in gn(desc)
+                p = self._primes[anc]
+                n = self._gn[desc]
+                exp = 0
+                while n % p == 0:
+                    n //= p
+                    exp += 1
+                if exp == paths:
+                    verified += 1
+                else:
+                    counterexamples.append({
+                        "ancestor": anc, "descendant": desc,
+                        "paths": paths, "exponent": exp,
+                    })
+
+        return {
+            "total_pairs": total,
+            "verified": verified,
+            "counterexamples": counterexamples,
+            "path_counting_holds": len(counterexamples) == 0,
+        }
 
     def verify_claim_2(self) -> dict:
         """

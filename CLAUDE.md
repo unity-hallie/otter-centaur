@@ -27,7 +27,7 @@ Now arithmetic *is* causation:
 This is not a metaphor. It is the Fundamental Theorem of Arithmetic
 applied to causal structure. Every DAG gets a unique, injective encoding.
 The divisibility lattice of the natural numbers becomes a calculus of
-causation. See `domains/causal_encoding.py`.
+causation. See `domains/causal_encoding.py`, Property 6.
 
 ## Running
 
@@ -41,7 +41,7 @@ python -m otter --domain zeta            # Euler product convergence
 python -m otter --domain self-ref        # self-referential fixed point
 python -m otter --domain causal_encoding # Hilbert space + interference
 python -m otter --domain interactive     # human in the loop
-python -m pytest                         # 324 tests, ~6s
+python -m pytest                         # 329 tests, ~6s
 ```
 
 ## Design principles (SPICES)
