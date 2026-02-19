@@ -5,6 +5,9 @@ Based on Johnicholas Hines' formulation: pick a focus from set_of_support,
 combine it with everything in usable, add new results back to set_of_support.
 The combination function is entirely pluggable -- this loop knows nothing
 about what the items mean.
+
+SPICES: Simplicity — the algorithm stripped to its essence.
+SPICES: Community — the pluggable combine_fn invites human, LLM, or centaur.
 """
 
 from typing import Callable, Optional

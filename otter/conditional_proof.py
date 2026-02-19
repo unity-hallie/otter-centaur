@@ -76,6 +76,7 @@ def prove_conditionally(
         edge_clauses.append(clause)
 
     # --- Guard 1: consistency check ---
+    # SPICES: Peace — the system refuses to weaponize contradictions.
     # Run resolution on edges + rules alone (no negated goal).
     # If they're already contradictory, any proof is worthless.
     consistency_state = OtterState()

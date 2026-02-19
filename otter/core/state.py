@@ -48,6 +48,8 @@ class Edge:
 
     In edge-first graphs the edge IS the primary object.
     Nodes are just where edges meet; they have no independent existence.
+
+    SPICES: Equality — relationships are primary, not entities.
     """
     subject: str
     predicate: str

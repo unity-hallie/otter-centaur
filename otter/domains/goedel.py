@@ -57,11 +57,29 @@ GOEDEL_SYMBOL_TABLE = {
 GOEDEL_VARIABLE_BASE = 13
 
 
-def goedel_symbol_table() -> dict:
-    """Return the symbol table extended with standard variable codes."""
+def goedel_symbol_table(extra: list = None) -> dict:
+    """
+    Return the symbol table extended with standard variable codes.
+
+    Args:
+        extra: optional list of additional symbol strings to register.
+               Each symbol not already in the table gets the next
+               available code (max existing code + 1, then +2, etc.).
+               Order determines code assignment, so pass a stable list.
+
+    Returns:
+        dict mapping symbol string -> integer code.
+        Existing codes are never changed.
+    """
     table = dict(GOEDEL_SYMBOL_TABLE)
     for i, var in enumerate(["W", "X", "Y", "Z"]):
         table[var] = GOEDEL_VARIABLE_BASE + i
+    if extra:
+        next_code = max(table.values()) + 1
+        for sym in extra:
+            if sym not in table:
+                table[sym] = next_code
+                next_code += 1
     return table
 
 
