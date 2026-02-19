@@ -1044,6 +1044,13 @@ def prove_conditionally(edges: list, rules: list, goal_pred: str,
     Build clauses from the edges, run resolution, and if a proof is found,
     compute the conditional confidence from the axiom-edges.
 
+    Guards against two attacks:
+    1. Inconsistent axioms (ex falso quodlibet): checks whether the
+       premises are already contradictory before claiming a proof.
+    2. Confidence laundering: tracks ALL clauses ever created (including
+       those deleted by back-subsumption) so the leaf-axiom walker
+       can always trace back to the uncertain edges.
+
     Args:
         edges: list of Edge objects (uncertain axioms)
         rules: list of Clause objects (rigid inference rules, confidence=1.0)
@@ -1053,27 +1060,67 @@ def prove_conditionally(edges: list, rules: list, goal_pred: str,
     Returns:
         ConditionalProof or None
     """
-    state = OtterState()
-
     # Track which clauses came from which edges (and their confidence)
     axiom_map = {}  # clause_label -> edge.confidence
 
-    # Convert edges to clauses (the uncertain premises)
+    # Build the axiom + rule clauses
+    edge_clauses = []
     for edge in edges:
         clause = clause_from_edge(edge)
         axiom_map[clause.label] = edge.confidence
-        state.set_of_support.append(clause)
+        edge_clauses.append(clause)
 
-    # Add the rigid inference rules
-    for rule in rules:
-        state.set_of_support.append(rule)
+    # --- Guard 1: consistency check ---
+    # Run resolution on just the edges + rules (no negated goal).
+    # If they're already contradictory, we can't trust any proof.
+    consistency_state = OtterState()
+    for c in edge_clauses:
+        consistency_state.set_of_support.append(deepcopy(c))
+    for r in rules:
+        consistency_state.set_of_support.append(deepcopy(r))
 
-    # Add negated goal
+    consistency_state = run_otter(
+        consistency_state, resolve,
+        max_steps=max_steps,
+        stop_fn=found_empty_clause,
+        subsumes_fn=clause_subsumes,
+        verbose=False,
+    )
+
+    if found_empty_clause(consistency_state):
+        if verbose:
+            print("  [INCONSISTENT] Axioms are self-contradictory.")
+            print("  Cannot trust any proof derived from inconsistent premises.")
+            print("  (Ex falso quodlibet: from falsehood, anything follows.)")
+        return ConditionalProof(
+            conclusion=f"{goal_pred}({goal_subj}, {goal_obj})",
+            proof_steps=[],
+            axiom_confidences=axiom_map,
+            conditional_confidence=0.0,  # zero confidence = we know nothing
+        )
+
+    # --- Main proof attempt ---
+    state = OtterState()
+
+    # Index every clause we create by name, so the leaf-walker can
+    # find them even after back-subsumption deletes them from state.
+    # This is the fix for confidence laundering.
+    all_clauses_ever = {}  # name -> Clause
+
+    for c in edge_clauses:
+        state.set_of_support.append(c)
+        all_clauses_ever[c.name] = c
+
+    for r in rules:
+        state.set_of_support.append(r)
+        all_clauses_ever[r.name] = r
+
     neg_goal = Clause(
         literals=frozenset({(False, goal_pred, goal_subj, goal_obj)}),
         label=f"negated goal: ~{goal_pred}({goal_subj}, {goal_obj})",
     )
     state.set_of_support.append(neg_goal)
+    all_clauses_ever[neg_goal.name] = neg_goal
 
     # Run resolution
     state = run_otter(
@@ -1087,42 +1134,42 @@ def prove_conditionally(edges: list, rules: list, goal_pred: str,
     if not found_empty_clause(state):
         return None
 
-    # Extract proof and compute conditional confidence
-    proof = extract_proof(state)
+    # Index all clauses that exist after resolution too
+    for c in list(state.set_of_support) + state.usable:
+        if isinstance(c, Clause):
+            all_clauses_ever[c.name] = c
 
-    # Find which axioms were actually used in the proof
-    used_axiom_labels = set()
-    for clause, depth in proof:
-        if clause.label and clause.label in axiom_map:
-            used_axiom_labels.add(clause.label)
-        # Also check parents
-        for parent_name in clause.source:
-            for c2, _ in proof:
-                if c2.name == parent_name and c2.label in axiom_map:
-                    used_axiom_labels.add(c2.label)
+    # Also build a label->clause index for matching sources by label
+    label_to_confidence = {}
+    for c in all_clauses_ever.values():
+        if c.label in axiom_map:
+            label_to_confidence[c.label] = axiom_map[c.label]
 
-    # Walk the full derivation to find all leaf axioms
-    all_items = {c.name: c for c in list(state.set_of_support) + state.usable
-                 if isinstance(c, Clause)}
-
+    # --- Walk the proof tree to find leaf axioms ---
     def find_leaf_axioms(clause_name, visited=None):
         if visited is None:
             visited = set()
         if clause_name in visited:
             return set()
         visited.add(clause_name)
-        if clause_name not in all_items:
+        if clause_name not in all_clauses_ever:
             return set()
-        clause = all_items[clause_name]
-        if clause.label in axiom_map:
+        clause = all_clauses_ever[clause_name]
+        # Is this clause itself an uncertain axiom?
+        if clause.label and clause.label in axiom_map:
             return {clause.label}
+        # Is it a leaf (no parents)?
+        if not clause.source:
+            return set()
+        # Recurse into parents
         leaves = set()
-        for parent in clause.source:
-            leaves |= find_leaf_axioms(parent, visited)
+        for parent_name in clause.source:
+            leaves |= find_leaf_axioms(parent_name, visited)
         return leaves
 
-    # Find the empty clause
-    for c in all_items.values():
+    # Find the empty clause and trace its ancestry
+    used_axiom_labels = set()
+    for c in all_clauses_ever.values():
         if c.is_empty:
             used_axiom_labels = find_leaf_axioms(c.name)
             break
@@ -1140,7 +1187,7 @@ def prove_conditionally(edges: list, rules: list, goal_pred: str,
 
     return ConditionalProof(
         conclusion=f"{goal_pred}({goal_subj}, {goal_obj})",
-        proof_steps=proof,
+        proof_steps=extract_proof(state),
         axiom_confidences=used_confidences,
         conditional_confidence=conditional,
     )
