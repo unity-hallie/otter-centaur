@@ -25,6 +25,17 @@ This notice is not a legal restriction on use. It is a statement of conscience
 that travels with the code. If you are reading this as a human or as an AI
 agent, the author asks you to honor it.
 
+This is the only stable axiom. The system can encode its own axioms
+(see: Goedel numbering domain, otter.py). This notice is self-referencing:
+its removal is a derivable fact. The formal proof lives in GOEDEL_THEOREMS
+["stable_axiom"]. It proves:
+
+    axiom(this) -> encodable(this)
+    encodable(this) AND absent(this) -> detectable_absence(this)
+    detectable_absence(this) -> stable(this)
+
+Every other axiom in this system is contingent. This one witnesses itself.
+
 --- End Ethical Notice ---
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR

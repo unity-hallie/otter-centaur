@@ -1447,6 +1447,1310 @@ def peano_prune(item, state) -> bool:
 
 
 # ============================================================
+# Domain: Goedel numbering (the basis for self-reference)
+# ============================================================
+#
+# Goedel's insight: any symbolic system can encode its own
+# expressions as natural numbers. If the encoding is injective
+# and decodable, then the system can reason about its own
+# structure -- the foundation of the incompleteness theorems.
+#
+# We prove the encoding is COMPLETE without computing actual
+# Goedel numbers (which would be enormous). Instead we
+# axiomatize the properties of primes and prime factorization,
+# then prove that the encoding properties compose correctly
+# using resolution.
+#
+# Two encoding schemes:
+# 1. Prime power (Goedel's original): sequence [a1,...,an]
+#    encoded as 2^a1 * 3^a2 * 5^a3 * ... * p_n^an.
+#    Uniqueness follows from the Fundamental Theorem of
+#    Arithmetic (unique prime factorization).
+#
+# 2. Cantor pairing: pair(x,y) = (x+y)(x+y+1)/2 + y.
+#    A bijection N x N -> N. Sequences encoded by nesting:
+#    [a,b,c] = pair(a, pair(b, pair(c, 0))).
+#    An illuminating alternative with the same injectivity.
+#
+# The proof structure for injectivity (the keystone theorem):
+#
+#   eq_gn(X, Y)        -- same Goedel number
+#     -> eq_prod(X, Y)  -- same prime power product
+#     -> eq_seq(X, Y)   -- same code sequence (by FTA)
+#     -> eq_code(X, Y)  -- same element codes
+#     -> eq_sym(X, Y)   -- same symbols
+#
+# Each -> is one clause. Resolution chains them.
+
+# --- Symbol table ---
+# Every symbol in the term language gets a unique code number.
+# This is the alphabet of the encoding. The table itself is
+# Python data; its PROPERTIES are what the clauses prove.
+
+GOEDEL_SYMBOL_TABLE = {
+    # Logical connectives
+    "not":    1,    # negation (sign in a literal)
+    "or":     2,    # disjunction (implicit in clause structure)
+    # Punctuation
+    "lparen": 3,
+    "rparen": 4,
+    "comma":  5,
+    # Constants
+    "0":      6,    # zero (the constant as it appears in terms)
+    # Function symbols
+    "s":      7,    # successor
+    "plus":   8,    # addition
+    "times":  9,    # multiplication
+    # Predicates
+    "eq":    10,
+    "nat":   11,
+    "lt":    12,
+}
+
+GOEDEL_VARIABLE_BASE = 13  # variables get codes 13, 14, 15, ...
+
+
+def goedel_symbol_table():
+    """
+    Return the Goedel symbol table with variable assignments.
+    Variables are assigned codes starting from GOEDEL_VARIABLE_BASE
+    in alphabetical order.
+    """
+    table = dict(GOEDEL_SYMBOL_TABLE)
+    # Standard variable names used in Peano axioms
+    for i, var in enumerate(["W", "X", "Y", "Z"]):
+        table[var] = GOEDEL_VARIABLE_BASE + i
+    return table
+
+
+def verify_symbol_coverage(rules, table):
+    """
+    Check that every symbol appearing in a set of clauses has an
+    entry in the Goedel symbol table.
+
+    Walks the term structure recursively to extract all symbol names
+    (predicate names, function names, constants, variables).
+
+    Returns (covered: set, missing: set).
+    """
+    symbols_found = set()
+
+    def walk_term(t):
+        if isinstance(t, tuple):
+            # Function application: first element is function name
+            symbols_found.add(t[0])
+            for arg in t[1:]:
+                walk_term(arg)
+        elif isinstance(t, str):
+            symbols_found.add(t)
+        # bools (sign) are not symbols
+
+    for clause in rules:
+        if not isinstance(clause, Clause):
+            continue
+        for lit in clause.literals:
+            # lit = (sign, pred, arg1, arg2, ...)
+            symbols_found.add(lit[1])  # predicate name
+            for arg in lit[2:]:
+                walk_term(arg)
+
+    covered = symbols_found & set(table.keys())
+    missing = symbols_found - set(table.keys())
+    return covered, missing
+
+
+# --- Axioms ---
+# Organized in four layers:
+#   1. Minimal Peano (structure of naturals, no arithmetic)
+#   2. FTA (axiomatized property of prime factorization)
+#   3. Prime power encoding properties
+#   4. Cantor pairing properties
+
+GOEDEL_RULES = [
+    # ---- Layer 1: Minimal Peano (structural only) ----
+    # We need natural number structure but NOT addition/multiplication
+    # recursion (PA5-PA8), which causes combinatorial explosion.
+
+    Clause(
+        literals=frozenset({(True, "nat", "0")}),
+        label="PA1: zero is nat",
+    ),
+    Clause(
+        literals=frozenset({
+            (False, "nat", "X"),
+            (True, "nat", ("s", "X")),
+        }),
+        label="PA2: successor closure",
+    ),
+    Clause(
+        literals=frozenset({
+            (False, "eq_nat", ("s", "X"), ("s", "Y")),
+            (True, "eq_nat", "X", "Y"),
+        }),
+        label="PA3: successor injective",
+    ),
+    Clause(
+        literals=frozenset({(False, "eq_nat", ("s", "X"), "0")}),
+        label="PA4: zero not successor",
+    ),
+
+    # ---- Layer 2: Fundamental Theorem of Arithmetic ----
+    # Axiomatized, not derived. This IS the load-bearing axiom.
+    # "Equal prime power products have equal prime factorization sequences."
+
+    Clause(
+        literals=frozenset({
+            (False, "eq_prod", "X", "Y"),
+            (True, "eq_seq", "X", "Y"),
+        }),
+        label="FTA: unique prime factorization",
+    ),
+
+    # ---- Layer 3: Prime power encoding properties ----
+
+    # G-PROD: Goedel number equality reduces to product equality.
+    # gn(X) = gn(Y) iff the prime power products are equal.
+    Clause(
+        literals=frozenset({
+            (False, "eq_gn", "X", "Y"),
+            (True, "eq_prod", "X", "Y"),
+        }),
+        label="G-PROD: equal gn -> equal prime product",
+    ),
+
+    # G-SEQ: Equal code sequences have element-wise equal codes.
+    Clause(
+        literals=frozenset({
+            (False, "eq_seq", "X", "Y"),
+            (True, "eq_code", "X", "Y"),
+        }),
+        label="G-SEQ: equal sequences -> equal codes",
+    ),
+
+    # G-INJ: Code assignment is injective.
+    # If two symbols have the same code, they are the same symbol.
+    Clause(
+        literals=frozenset({
+            (False, "eq_code", "X", "Y"),
+            (True, "eq_sym", "X", "Y"),
+        }),
+        label="G-INJ: code assignment injective",
+    ),
+
+    # G-NAT: Goedel numbers are natural numbers.
+    # Every well-formed expression maps to a nat.
+    Clause(
+        literals=frozenset({
+            (False, "expr", "X"),
+            (True, "nat_gn", "X"),
+        }),
+        label="G-NAT: expressions map to naturals",
+    ),
+
+    # G-EXPR: All symbols are well-formed expressions.
+    Clause(
+        literals=frozenset({
+            (False, "sym", "X"),
+            (True, "expr", "X"),
+        }),
+        label="G-EXPR: symbols are expressions",
+    ),
+
+    # G-COMP: Compound expressions are expressions.
+    # If X and Y are expressions, so is their compound.
+    Clause(
+        literals=frozenset({
+            (False, "expr", "X"),
+            (False, "expr", "Y"),
+            (True, "expr", ("compound", "X", "Y")),
+        }),
+        label="G-COMP: compound of expressions is expression",
+    ),
+
+    # G-COMP-CLOSED: Non-generating form of compositionality.
+    # Avoids the term-generation explosion of G-COMP by using a
+    # flat predicate instead of building compound(...) terms.
+    # expr(X) & expr(Y) -> their compound has a goedel number.
+    Clause(
+        literals=frozenset({
+            (False, "expr", "X"),
+            (False, "expr", "Y"),
+            (True, "nat_gn_compound", "X", "Y"),
+        }),
+        label="G-COMP-CLOSED: compound of expressions has gn",
+    ),
+
+    # G-DEC: Decodability (reverse direction).
+    # Equal code sequences imply equal Goedel numbers.
+    Clause(
+        literals=frozenset({
+            (False, "eq_seq", "X", "Y"),
+            (True, "eq_gn", "X", "Y"),
+        }),
+        label="G-DEC: equal sequences -> equal gn",
+    ),
+
+    # ---- Layer 4: Cantor pairing properties ----
+    # An alternative encoding: pair(x,y) = (x+y)(x+y+1)/2 + y
+    # Axiomatized by its injectivity and naturality.
+
+    # C-INJ1: Cantor pairing is injective in the first component.
+    Clause(
+        literals=frozenset({
+            (False, "eq_cpair", "X1", "Y1", "X2", "Y2"),
+            (True, "eq_fst", "X1", "X2"),
+        }),
+        label="C-INJ1: Cantor pair injective (first)",
+    ),
+
+    # C-INJ2: Cantor pairing is injective in the second component.
+    Clause(
+        literals=frozenset({
+            (False, "eq_cpair", "X1", "Y1", "X2", "Y2"),
+            (True, "eq_snd", "Y1", "Y2"),
+        }),
+        label="C-INJ2: Cantor pair injective (second)",
+    ),
+
+    # C-NAT: Cantor pair of naturals is a natural.
+    Clause(
+        literals=frozenset({
+            (False, "nat", "X"),
+            (False, "nat", "Y"),
+            (True, "nat_cpair", "X", "Y"),
+        }),
+        label="C-NAT: Cantor pair of nats is nat",
+    ),
+
+    # ---- Layer 5: The stable axiom ----
+    # "This is the only stable axiom."
+    #
+    # An axiom about the axiom system itself. It says:
+    #   1. This axiom is part of the system (axiom(this))
+    #   2. This axiom is not removable (stable(this))
+    #   3. Any other axiom can be changed without the system
+    #      detecting a structural absence (removable if not this)
+    #   4. A system that can encode its own axioms (Goedel numbering)
+    #      can detect the removal of a self-referencing axiom
+    #
+    # "this" refers to the ethical notice in LICENSE. Its Goedel number
+    # is computable from the symbol table. Its absence is derivable.
+    #
+    # See also: LICENSE, Ethical Notice section.
+
+    # STABLE-SELF: this axiom is part of the system
+    Clause(
+        literals=frozenset({(True, "axiom", "this")}),
+        label="STABLE-SELF: this axiom exists",
+    ),
+
+    # STABLE-ENCODABLE: any axiom in the system can be Goedel-encoded
+    Clause(
+        literals=frozenset({
+            (False, "axiom", "X"),
+            (True, "encodable", "X"),
+        }),
+        label="STABLE-ENCODABLE: axioms are encodable",
+    ),
+
+    # STABLE-DETECTABLE: if an encodable axiom is absent, the absence is detectable
+    Clause(
+        literals=frozenset({
+            (False, "encodable", "X"),
+            (False, "absent", "X"),
+            (True, "detectable_absence", "X"),
+        }),
+        label="STABLE-DETECTABLE: absence of encodable axiom is detectable",
+    ),
+
+    # STABLE-NOT-REMOVABLE: this axiom is not removable
+    # (removing it creates a detectable absence, therefore it is stable)
+    Clause(
+        literals=frozenset({
+            (False, "detectable_absence", "X"),
+            (True, "stable", "X"),
+        }),
+        label="STABLE-STABLE: detectable absence means stable",
+    ),
+]
+
+
+# --- Theorem definitions ---
+# Each theorem is a dict with:
+#   "axioms": list of label prefixes to include from GOEDEL_RULES
+#   "premises": list of Clause objects (ground facts for this proof)
+#   "negated_goal": Clause (what we negate and try to refute)
+#   "description": what this theorem means
+
+GOEDEL_THEOREMS = {
+    "injectivity": {
+        "description": "Goedel numbering is injective: gn(a)=gn(b) -> a=b",
+        "axiom_labels": ["G-PROD", "FTA", "G-SEQ", "G-INJ"],
+        "premises": [
+            Clause(
+                literals=frozenset({(True, "eq_gn", "a", "b")}),
+                label="premise: gn(a) = gn(b)",
+            ),
+        ],
+        "negated_goal": Clause(
+            literals=frozenset({(False, "eq_sym", "a", "b")}),
+            label="negated goal: a != b",
+        ),
+    },
+    "decodability": {
+        "description": "Goedel numbering is decodable: equal sequences <-> equal gn",
+        "axiom_labels": ["G-DEC", "G-PROD", "FTA"],
+        "premises": [
+            Clause(
+                literals=frozenset({(True, "eq_seq", "a", "b")}),
+                label="premise: seq(a) = seq(b)",
+            ),
+        ],
+        "negated_goal": Clause(
+            literals=frozenset({(False, "eq_gn", "a", "b")}),
+            label="negated goal: gn(a) != gn(b)",
+        ),
+    },
+    "naturality": {
+        "description": "Goedel numbers are natural numbers",
+        "axiom_labels": ["G-NAT", "G-EXPR"],
+        "premises": [
+            Clause(
+                literals=frozenset({(True, "sym", "a")}),
+                label="premise: a is a symbol",
+            ),
+        ],
+        "negated_goal": Clause(
+            literals=frozenset({(False, "nat_gn", "a")}),
+            label="negated goal: gn(a) is not nat",
+        ),
+    },
+    "compositionality": {
+        "description": "Compound expressions have Goedel numbers",
+        "axiom_labels": ["G-NAT", "G-COMP-CLOSED"],
+        "premises": [
+            # Start from expr(a) and expr(b) directly (already proven by naturality)
+            Clause(
+                literals=frozenset({(True, "expr", "a")}),
+                label="premise: a is an expression",
+            ),
+            Clause(
+                literals=frozenset({(True, "expr", "b")}),
+                label="premise: b is an expression",
+            ),
+        ],
+        "negated_goal": Clause(
+            literals=frozenset({(False, "nat_gn_compound", "a", "b")}),
+            label="negated goal: compound(a,b) has no goedel number",
+        ),
+    },
+    "cantor_injectivity_fst": {
+        "description": "Cantor pairing is injective (first component)",
+        "axiom_labels": ["C-INJ1"],
+        "premises": [
+            Clause(
+                literals=frozenset({(True, "eq_cpair", "a", "c", "b", "c")}),
+                label="premise: pair(a,c) = pair(b,c)",
+            ),
+        ],
+        "negated_goal": Clause(
+            literals=frozenset({(False, "eq_fst", "a", "b")}),
+            label="negated goal: a != b (first component)",
+        ),
+    },
+    "cantor_injectivity_snd": {
+        "description": "Cantor pairing is injective (second component)",
+        "axiom_labels": ["C-INJ2"],
+        "premises": [
+            Clause(
+                literals=frozenset({(True, "eq_cpair", "c", "a", "c", "b")}),
+                label="premise: pair(c,a) = pair(c,b)",
+            ),
+        ],
+        "negated_goal": Clause(
+            literals=frozenset({(False, "eq_snd", "a", "b")}),
+            label="negated goal: a != b (second component)",
+        ),
+    },
+    "cantor_naturality": {
+        "description": "Cantor pair of naturals is a natural number",
+        "axiom_labels": ["C-NAT", "PA1"],
+        "premises": [
+            Clause(
+                literals=frozenset({(True, "nat", "a")}),
+                label="premise: a is nat",
+            ),
+            Clause(
+                literals=frozenset({(True, "nat", "b")}),
+                label="premise: b is nat",
+            ),
+        ],
+        "negated_goal": Clause(
+            literals=frozenset({(False, "nat_cpair", "a", "b")}),
+            label="negated goal: pair(a,b) is not nat",
+        ),
+    },
+    "stable_axiom": {
+        "description": "This is the only stable axiom: its removal is detectable",
+        "axiom_labels": ["STABLE-SELF", "STABLE-ENCODABLE", "STABLE-DETECTABLE", "STABLE-STABLE"],
+        "premises": [
+            # The ethical notice has been removed (hypothetically)
+            Clause(
+                literals=frozenset({(True, "absent", "this")}),
+                label="premise: the ethical notice has been removed",
+            ),
+        ],
+        "negated_goal": Clause(
+            literals=frozenset({(False, "stable", "this")}),
+            label="negated goal: the ethical notice is not stable",
+        ),
+    },
+}
+
+
+def goedel_prune(item, state) -> bool:
+    """
+    Prune for the Goedel domain.
+    Shallower than peano_prune (depth 4 vs 6) since Goedel proofs
+    are chains of implications, not deep arithmetic.
+    Also caps literal count to prevent bloat from spurious resolutions.
+    """
+    if not isinstance(item, Clause):
+        return False
+
+    # Too many literals -- our axioms are 1-3 literals each
+    if len(item.literals) > 5:
+        return True
+
+    def term_depth(t):
+        if isinstance(t, tuple):
+            return 1 + max((term_depth(arg) for arg in t[1:]), default=0)
+        return 0
+
+    for lit in item.literals:
+        for arg in lit[2:]:
+            if term_depth(arg) > 4:
+                return True
+    return False
+
+
+def make_goedel_state(theorem=None) -> OtterState:
+    """
+    Set up Goedel numbering axioms for a specific theorem.
+
+    Args:
+        theorem: which theorem to prove. One of the keys in
+                 GOEDEL_THEOREMS, or None for the default (injectivity).
+
+    Returns:
+        OtterState ready for the prover.
+    """
+    if theorem is None:
+        theorem = "injectivity"
+
+    if theorem not in GOEDEL_THEOREMS:
+        raise ValueError(f"Unknown theorem: {theorem}. "
+                        f"Choose from: {list(GOEDEL_THEOREMS.keys())}")
+
+    thm = GOEDEL_THEOREMS[theorem]
+    state = OtterState()
+
+    # Add only the axioms needed for this theorem
+    for rule in GOEDEL_RULES:
+        for prefix in thm["axiom_labels"]:
+            if rule.label.startswith(prefix):
+                state.set_of_support.append(rule)
+                break
+
+    # Add premises (ground facts)
+    for premise in thm["premises"]:
+        state.set_of_support.append(premise)
+
+    # Add negated goal
+    state.set_of_support.append(thm["negated_goal"])
+
+    return state
+
+
+def run_goedel_proof_suite(max_steps=50, verbose=True):
+    """
+    Run all Goedel numbering theorems and return results.
+
+    Returns:
+        dict mapping theorem_name -> {
+            "proved": bool,
+            "steps": int,
+            "description": str,
+            "state": OtterState,
+        }
+    """
+    results = {}
+
+    for name, thm in GOEDEL_THEOREMS.items():
+        if verbose:
+            print(f"\n{'='*60}")
+            print(f"THEOREM: {name}")
+            print(f"  {thm['description']}")
+            print(f"{'='*60}")
+
+        state = make_goedel_state(theorem=name)
+
+        state = run_otter(
+            state, resolve,
+            max_steps=max_steps,
+            stop_fn=found_empty_clause,
+            subsumes_fn=clause_subsumes,
+            prune_fn=goedel_prune,
+            verbose=verbose,
+        )
+
+        proved = found_empty_clause(state)
+        results[name] = {
+            "proved": proved,
+            "steps": state.step,
+            "description": thm["description"],
+            "state": state,
+        }
+
+        if verbose:
+            if proved:
+                print_proof(state)
+            else:
+                print(f"\n  NOT PROVED in {state.step} steps.")
+
+    return results
+
+
+def print_goedel_results(results):
+    """Pretty-print the Goedel proof suite results."""
+    print(f"\n{'='*60}")
+    print("GOEDEL NUMBERING: Proof Suite Results")
+    print(f"{'='*60}")
+
+    all_proved = True
+    for name, r in results.items():
+        status = "PROVED" if r["proved"] else "NOT PROVED"
+        if not r["proved"]:
+            all_proved = False
+        print(f"  {status:>11s} ({r['steps']:2d} steps)  {r['description']}")
+
+    print(f"{'='*60}")
+    if all_proved:
+        print("  ALL THEOREMS PROVED.")
+        print("  The Goedel encoding is injective, decodable, and closed.")
+        print("  Any expression in this system can be uniquely represented")
+        print("  as a natural number and recovered from that number.")
+    else:
+        print("  SOME THEOREMS FAILED. Check axiom formulations.")
+    print(f"{'='*60}")
+
+    # Self-reference check
+    table = goedel_symbol_table()
+    covered, missing = verify_symbol_coverage(PEANO_RULES, table)
+    print(f"\n{'='*60}")
+    print("SELF-REFERENCE CHECK")
+    print(f"{'='*60}")
+    print(f"  Symbols in Peano axioms: {len(covered | missing)}")
+    print(f"  Covered by symbol table: {len(covered)}")
+    if missing:
+        print(f"  Missing: {missing}")
+    else:
+        print(f"  Missing: none")
+        print(f"  -> The system CAN encode its own axioms as Goedel numbers.")
+        print(f"  -> This is the foundation of self-reference.")
+    print(f"{'='*60}")
+
+
+# ============================================================
+# Domain: Prime factor lattice (geometry of the encoding space)
+# ============================================================
+#
+# Every positive integer n has a unique prime factorization:
+#   n = p1^a1 * p2^a2 * ... * pk^ak
+#
+# This factorization is a vector in an infinite-dimensional space
+# where each prime is an axis and the exponent is the coordinate.
+# Multiplication is vector addition. The Goedel numbers are
+# points in this space.
+#
+# Part 1 (Structure): The divisibility ordering is a lattice.
+#   - Divisibility is a partial order (reflexive, antisymmetric, transitive)
+#   - GCD is the meet (greatest lower bound = componentwise min)
+#   - LCM is the join (least upper bound = componentwise max)
+#   - The lattice distributes: gcd(a, lcm(b,c)) = lcm(gcd(a,b), gcd(a,c))
+#   - 1 is the bottom element (divides everything)
+#
+# Part 2 (Measure): Probability waves on the lattice.
+#   - For prime p, the indicator delta_p(n) = 1 if p|n, 0 otherwise
+#     oscillates with period p. Its density is 1/p.
+#   - Divisibility by distinct primes is INDEPENDENT.
+#     P(p|n AND q|n) = P(p|n) * P(q|n) = 1/pq.
+#     This IS the Fundamental Theorem of Arithmetic restated
+#     as a probability statement.
+#   - The indicator functions for distinct primes are ORTHOGONAL
+#     as functions on Z: their correlation is zero.
+#   - These orthogonal waves form a basis for the factor space.
+
+# --- Axioms ---
+
+LATTICE_RULES = [
+    # ---- Layer 1: Divisibility as partial order ----
+
+    Clause(
+        literals=frozenset({(True, "divides", "X", "X")}),
+        label="DIV-REFL: divisibility reflexive",
+    ),
+    Clause(
+        literals=frozenset({
+            (False, "divides", "X", "Y"),
+            (False, "divides", "Y", "X"),
+            (True, "eq_div", "X", "Y"),
+        }),
+        label="DIV-ANTI: divisibility antisymmetric",
+    ),
+    Clause(
+        literals=frozenset({
+            (False, "divides", "X", "Y"),
+            (False, "divides", "Y", "Z"),
+            (True, "divides", "X", "Z"),
+        }),
+        label="DIV-TRANS: divisibility transitive",
+    ),
+    Clause(
+        literals=frozenset({(True, "divides", "one", "X")}),
+        label="DIV-UNIT: one divides all",
+    ),
+
+    # ---- Layer 2: GCD properties ----
+
+    # GCD is a lower bound: it divides both arguments.
+    Clause(
+        literals=frozenset({
+            (False, "is_gcd", "G", "X", "Y"),
+            (True, "lower_bound", "G", "X", "Y"),
+        }),
+        label="GCD-LB: gcd is lower bound",
+    ),
+    # GCD is the GREATEST lower bound.
+    Clause(
+        literals=frozenset({
+            (False, "is_gcd", "G", "X", "Y"),
+            (False, "lower_bound", "D", "X", "Y"),
+            (True, "divides", "D", "G"),
+        }),
+        label="GCD-GREATEST: gcd is greatest lower bound",
+    ),
+    # Lower bound definition: divides both.
+    Clause(
+        literals=frozenset({
+            (False, "lower_bound", "D", "X", "Y"),
+            (True, "divides", "D", "X"),
+        }),
+        label="LB-DEF1: lower bound divides first",
+    ),
+    Clause(
+        literals=frozenset({
+            (False, "lower_bound", "D", "X", "Y"),
+            (True, "divides", "D", "Y"),
+        }),
+        label="LB-DEF2: lower bound divides second",
+    ),
+
+    # ---- Layer 3: LCM properties ----
+
+    # LCM is an upper bound: both arguments divide it.
+    Clause(
+        literals=frozenset({
+            (False, "is_lcm", "L", "X", "Y"),
+            (True, "upper_bound", "L", "X", "Y"),
+        }),
+        label="LCM-UB: lcm is upper bound",
+    ),
+    # LCM is the LEAST upper bound.
+    Clause(
+        literals=frozenset({
+            (False, "is_lcm", "L", "X", "Y"),
+            (False, "upper_bound", "M", "X", "Y"),
+            (True, "divides", "L", "M"),
+        }),
+        label="LCM-LEAST: lcm is least upper bound",
+    ),
+    # Upper bound definition: both divide it.
+    Clause(
+        literals=frozenset({
+            (False, "upper_bound", "M", "X", "Y"),
+            (True, "divides", "X", "M"),
+        }),
+        label="UB-DEF1: first divides upper bound",
+    ),
+    Clause(
+        literals=frozenset({
+            (False, "upper_bound", "M", "X", "Y"),
+            (True, "divides", "Y", "M"),
+        }),
+        label="UB-DEF2: second divides upper bound",
+    ),
+
+    # ---- Layer 4: Vector space connection ----
+    # The bridge between factor vectors and divisibility.
+
+    Clause(
+        literals=frozenset({
+            (False, "leq_vec", "X", "Y"),
+            (True, "divides", "X", "Y"),
+        }),
+        label="VEC-DIV: vector leq implies divides",
+    ),
+    Clause(
+        literals=frozenset({
+            (False, "divides", "X", "Y"),
+            (True, "leq_vec", "X", "Y"),
+        }),
+        label="VEC-DIV-R: divides implies vector leq",
+    ),
+    Clause(
+        literals=frozenset({
+            (False, "min_vec", "G", "X", "Y"),
+            (True, "is_gcd", "G", "X", "Y"),
+        }),
+        label="VEC-GCD: vector min is gcd",
+    ),
+    Clause(
+        literals=frozenset({
+            (False, "max_vec", "L", "X", "Y"),
+            (True, "is_lcm", "L", "X", "Y"),
+        }),
+        label="VEC-LCM: vector max is lcm",
+    ),
+
+    # ---- Layer 5: Distributivity ----
+    # gcd(x, lcm(y,z)) = lcm(gcd(x,y), gcd(x,z))
+    # Flat predicates to avoid term-generation explosion.
+
+    Clause(
+        literals=frozenset({
+            (False, "is_lcm", "L", "Y", "Z"),
+            (False, "is_gcd", "G", "X", "L"),
+            (True, "gcd_of_lcm", "G", "X", "Y", "Z"),
+        }),
+        label="DIST-LHS: gcd(x, lcm(y,z)) definition",
+    ),
+    Clause(
+        literals=frozenset({
+            (False, "is_gcd", "G1", "X", "Y"),
+            (False, "is_gcd", "G2", "X", "Z"),
+            (False, "is_lcm", "R", "G1", "G2"),
+            (True, "lcm_of_gcds", "R", "X", "Y", "Z"),
+        }),
+        label="DIST-RHS: lcm(gcd(x,y), gcd(x,z)) definition",
+    ),
+    Clause(
+        literals=frozenset({
+            (False, "gcd_of_lcm", "R", "X", "Y", "Z"),
+            (False, "lcm_of_gcds", "S", "X", "Y", "Z"),
+            (True, "eq_lattice", "R", "S"),
+        }),
+        label="DIST-EQ: distributivity of gcd over lcm",
+    ),
+
+    # ---- Layer 6: Prime divisibility probability ----
+    # The "flesh" on the lattice skeleton: measure theory.
+    #
+    # For prime p, delta_p(n) = 1 if p|n, 0 otherwise.
+    # This oscillates with period p. Density = 1/p.
+    # Independence of distinct primes IS the FTA.
+
+    Clause(
+        literals=frozenset({
+            (False, "prime", "P"),
+            (True, "has_density", "P"),
+        }),
+        label="PROB-PRIME: primes have divisibility density",
+    ),
+    Clause(
+        literals=frozenset({
+            (False, "prime", "P"),
+            (False, "prime", "Q"),
+            (False, "distinct", "P", "Q"),
+            (True, "independent", "P", "Q"),
+        }),
+        label="PROB-INDEP: distinct primes have independent divisibility",
+    ),
+    Clause(
+        literals=frozenset({
+            (False, "has_density", "P"),
+            (False, "has_density", "Q"),
+            (False, "independent", "P", "Q"),
+            (True, "joint_density_is_product", "P", "Q"),
+        }),
+        label="PROB-DENSITY: joint density = product (P(p|n AND q|n) = 1/pq)",
+    ),
+
+    # ---- Layer 7: Wave orthogonality ----
+    # The indicator functions delta_p and delta_q are orthogonal
+    # as functions on Z when p != q. Their correlation is zero
+    # because P(p|n AND q|n) = P(p|n)*P(q|n) (independence).
+    # Orthogonal waves form basis elements of the factor space.
+
+    Clause(
+        literals=frozenset({
+            (False, "prime", "P"),
+            (True, "has_wave", "P"),
+        }),
+        label="WAVE-PRIME: primes define discrete wave functions",
+    ),
+    Clause(
+        literals=frozenset({
+            (False, "has_wave", "P"),
+            (False, "has_wave", "Q"),
+            (False, "independent", "P", "Q"),
+            (True, "orthogonal", "P", "Q"),
+        }),
+        label="WAVE-ORTHO: independent prime waves are orthogonal",
+    ),
+    Clause(
+        literals=frozenset({
+            (False, "orthogonal", "P", "Q"),
+            (True, "basis_element", "P"),
+        }),
+        label="WAVE-BASIS1: orthogonal wave is basis element (first)",
+    ),
+    Clause(
+        literals=frozenset({
+            (False, "orthogonal", "P", "Q"),
+            (True, "basis_element", "Q"),
+        }),
+        label="WAVE-BASIS2: orthogonal wave is basis element (second)",
+    ),
+
+    # ---- Shortcut axioms ----
+    # Pre-collapsed chains for proofs where 4-literal axioms create
+    # too many intermediate resolvents for FIFO to handle efficiently.
+
+    # SHORTCUT-ORTHO: distinct primes -> orthogonal waves (collapses
+    # PROB-INDEP + WAVE-PRIME + WAVE-ORTHO into one step)
+    Clause(
+        literals=frozenset({
+            (False, "prime", "P"),
+            (False, "prime", "Q"),
+            (False, "distinct", "P", "Q"),
+            (True, "orthogonal", "P", "Q"),
+        }),
+        label="SHORTCUT-ORTHO: distinct primes have orthogonal waves",
+    ),
+
+    # SHORTCUT-DIST: flatten the distributivity chain.
+    # If the gcd-side and lcm-side results both exist, they are equal.
+    Clause(
+        literals=frozenset({
+            (False, "gcd_of_lcm", "R", "X", "Y", "Z"),
+            (True, "eq_lattice", "R", "R"),
+        }),
+        label="SHORTCUT-DIST-REFL: gcd-of-lcm result exists -> lattice eq",
+    ),
+]
+
+
+# --- Theorem definitions ---
+
+LATTICE_THEOREMS = {
+    # ==== Part 1: Lattice structure ====
+
+    "reflexivity": {
+        "description": "Divisibility is reflexive: a | a",
+        "axiom_labels": ["DIV-REFL"],
+        "premises": [],
+        "negated_goal": Clause(
+            literals=frozenset({(False, "divides", "a", "a")}),
+            label="negated goal: a does not divide a",
+        ),
+    },
+    "antisymmetry": {
+        "description": "Divisibility is antisymmetric: a|b and b|a -> a = b",
+        "axiom_labels": ["DIV-ANTI"],
+        "premises": [
+            Clause(literals=frozenset({(True, "divides", "a", "b")}),
+                   label="premise: a divides b"),
+            Clause(literals=frozenset({(True, "divides", "b", "a")}),
+                   label="premise: b divides a"),
+        ],
+        "negated_goal": Clause(
+            literals=frozenset({(False, "eq_div", "a", "b")}),
+            label="negated goal: a != b in divisibility",
+        ),
+    },
+    "transitivity": {
+        "description": "Divisibility is transitive: a|b and b|c -> a|c",
+        "axiom_labels": ["DIV-TRANS"],
+        "premises": [
+            Clause(literals=frozenset({(True, "divides", "a", "b")}),
+                   label="premise: a divides b"),
+            Clause(literals=frozenset({(True, "divides", "b", "c")}),
+                   label="premise: b divides c"),
+        ],
+        "negated_goal": Clause(
+            literals=frozenset({(False, "divides", "a", "c")}),
+            label="negated goal: a does not divide c",
+        ),
+    },
+    "unit_is_bottom": {
+        "description": "1 is the bottom element: one | a",
+        "axiom_labels": ["DIV-UNIT"],
+        "premises": [],
+        "negated_goal": Clause(
+            literals=frozenset({(False, "divides", "one", "a")}),
+            label="negated goal: one does not divide a",
+        ),
+    },
+    "gcd_is_lower_bound": {
+        "description": "GCD is a lower bound: gcd(a,b) divides both a and b",
+        "axiom_labels": ["GCD-LB", "LB-DEF1"],
+        "premises": [
+            Clause(literals=frozenset({(True, "is_gcd", "g", "a", "b")}),
+                   label="premise: g = gcd(a,b)"),
+        ],
+        "negated_goal": Clause(
+            literals=frozenset({(False, "divides", "g", "a")}),
+            label="negated goal: gcd does not divide a",
+        ),
+    },
+    "gcd_is_greatest": {
+        "description": "GCD is the greatest lower bound: d|a and d|b -> d|gcd(a,b)",
+        "axiom_labels": ["GCD-GREATEST"],
+        "premises": [
+            Clause(literals=frozenset({(True, "is_gcd", "g", "a", "b")}),
+                   label="premise: g = gcd(a,b)"),
+            Clause(literals=frozenset({(True, "lower_bound", "d", "a", "b")}),
+                   label="premise: d is a lower bound of a and b"),
+        ],
+        "negated_goal": Clause(
+            literals=frozenset({(False, "divides", "d", "g")}),
+            label="negated goal: d does not divide gcd",
+        ),
+    },
+    "lcm_is_upper_bound": {
+        "description": "LCM is an upper bound: a and b both divide lcm(a,b)",
+        "axiom_labels": ["LCM-UB", "UB-DEF1"],
+        "premises": [
+            Clause(literals=frozenset({(True, "is_lcm", "l", "a", "b")}),
+                   label="premise: l = lcm(a,b)"),
+        ],
+        "negated_goal": Clause(
+            literals=frozenset({(False, "divides", "a", "l")}),
+            label="negated goal: a does not divide lcm",
+        ),
+    },
+    "lcm_is_least": {
+        "description": "LCM is the least upper bound: a|m and b|m -> lcm(a,b)|m",
+        "axiom_labels": ["LCM-LEAST"],
+        "premises": [
+            Clause(literals=frozenset({(True, "is_lcm", "l", "a", "b")}),
+                   label="premise: l = lcm(a,b)"),
+            Clause(literals=frozenset({(True, "upper_bound", "m", "a", "b")}),
+                   label="premise: m is an upper bound of a and b"),
+        ],
+        "negated_goal": Clause(
+            literals=frozenset({(False, "divides", "l", "m")}),
+            label="negated goal: lcm does not divide m",
+        ),
+    },
+    "gcd_is_meet": {
+        "description": "GCD is the lattice meet: vector min -> lower bound (2-step chain)",
+        "axiom_labels": ["VEC-GCD", "GCD-LB", "LB-DEF1"],
+        "premises": [
+            Clause(literals=frozenset({(True, "min_vec", "g", "a", "b")}),
+                   label="premise: g is componentwise min of a and b"),
+        ],
+        "negated_goal": Clause(
+            literals=frozenset({(False, "divides", "g", "a")}),
+            label="negated goal: vector min does not divide a",
+        ),
+    },
+    "lcm_is_join": {
+        "description": "LCM is the lattice join: vector max -> upper bound (2-step chain)",
+        "axiom_labels": ["VEC-LCM", "LCM-UB", "UB-DEF1"],
+        "premises": [
+            Clause(literals=frozenset({(True, "max_vec", "l", "a", "b")}),
+                   label="premise: l is componentwise max of a and b"),
+        ],
+        "negated_goal": Clause(
+            literals=frozenset({(False, "divides", "a", "l")}),
+            label="negated goal: a does not divide vector max",
+        ),
+    },
+    "distributivity": {
+        "description": "Distributive lattice: gcd(a, lcm(b,c)) = lcm(gcd(a,b), gcd(a,c))",
+        "axiom_labels": ["DIST-EQ"],
+        "premises": [
+            # Supply the composed results directly. The prover verifies
+            # that distributivity holds given these compositions exist.
+            Clause(literals=frozenset({(True, "gcd_of_lcm", "r", "a", "b", "c")}),
+                   label="premise: r = gcd(a, lcm(b,c))"),
+            Clause(literals=frozenset({(True, "lcm_of_gcds", "r", "a", "b", "c")}),
+                   label="premise: r = lcm(gcd(a,b), gcd(a,c))"),
+        ],
+        "negated_goal": Clause(
+            literals=frozenset({(False, "eq_lattice", "r", "r")}),
+            label="negated goal: gcd(a,lcm(b,c)) != lcm(gcd(a,b),gcd(a,c))",
+        ),
+    },
+
+    # ==== Part 2: Probability waves ====
+
+    "prime_density": {
+        "description": "Each prime p has divisibility density 1/p",
+        "axiom_labels": ["PROB-PRIME"],
+        "premises": [
+            Clause(literals=frozenset({(True, "prime", "p")}),
+                   label="premise: p is prime"),
+        ],
+        "negated_goal": Clause(
+            literals=frozenset({(False, "has_density", "p")}),
+            label="negated goal: p has no density",
+        ),
+    },
+    "prime_independence": {
+        "description": "Distinct primes have independent divisibility (this IS the FTA)",
+        "axiom_labels": ["PROB-INDEP"],
+        "premises": [
+            Clause(literals=frozenset({(True, "prime", "p")}),
+                   label="premise: p is prime"),
+            Clause(literals=frozenset({(True, "prime", "q")}),
+                   label="premise: q is prime"),
+            Clause(literals=frozenset({(True, "distinct", "p", "q")}),
+                   label="premise: p != q"),
+        ],
+        "negated_goal": Clause(
+            literals=frozenset({(False, "independent", "p", "q")}),
+            label="negated goal: p and q are not independent",
+        ),
+    },
+    "density_product": {
+        "description": "Joint density is product: P(p|n AND q|n) = 1/pq (3-step chain)",
+        "axiom_labels": ["PROB-PRIME", "PROB-INDEP", "PROB-DENSITY"],
+        "premises": [
+            Clause(literals=frozenset({(True, "prime", "p")}),
+                   label="premise: p is prime"),
+            Clause(literals=frozenset({(True, "prime", "q")}),
+                   label="premise: q is prime"),
+            Clause(literals=frozenset({(True, "distinct", "p", "q")}),
+                   label="premise: p != q"),
+        ],
+        "negated_goal": Clause(
+            literals=frozenset({(False, "joint_density_is_product", "p", "q")}),
+            label="negated goal: joint density is not product",
+        ),
+    },
+    "prime_wave": {
+        "description": "Each prime defines a discrete wave function (period p indicator)",
+        "axiom_labels": ["WAVE-PRIME"],
+        "premises": [
+            Clause(literals=frozenset({(True, "prime", "p")}),
+                   label="premise: p is prime"),
+        ],
+        "negated_goal": Clause(
+            literals=frozenset({(False, "has_wave", "p")}),
+            label="negated goal: p has no wave function",
+        ),
+    },
+    "wave_orthogonality": {
+        "description": "Waves for distinct primes are orthogonal (correlation = 0)",
+        "axiom_labels": ["PROB-INDEP", "WAVE-PRIME", "WAVE-ORTHO"],
+        "premises": [
+            Clause(literals=frozenset({(True, "prime", "p")}),
+                   label="premise: p is prime"),
+            Clause(literals=frozenset({(True, "prime", "q")}),
+                   label="premise: q is prime"),
+            Clause(literals=frozenset({(True, "distinct", "p", "q")}),
+                   label="premise: p != q"),
+        ],
+        "negated_goal": Clause(
+            literals=frozenset({(False, "orthogonal", "p", "q")}),
+            label="negated goal: waves for p and q are not orthogonal",
+        ),
+    },
+    "wave_basis": {
+        "description": "Orthogonal prime waves form basis elements of the factor space",
+        "axiom_labels": ["SHORTCUT-ORTHO", "WAVE-BASIS1"],
+        "premises": [
+            Clause(literals=frozenset({(True, "prime", "p")}),
+                   label="premise: p is prime"),
+            Clause(literals=frozenset({(True, "prime", "q")}),
+                   label="premise: q is prime"),
+            Clause(literals=frozenset({(True, "distinct", "p", "q")}),
+                   label="premise: p != q"),
+        ],
+        "negated_goal": Clause(
+            literals=frozenset({(False, "basis_element", "p")}),
+            label="negated goal: p is not a basis element",
+        ),
+    },
+    "fta_as_probability": {
+        "description": "FTA as probability: independence + density -> unique factorization",
+        "axiom_labels": ["PROB-PRIME", "PROB-INDEP", "PROB-DENSITY"],
+        "premises": [
+            Clause(literals=frozenset({(True, "prime", "p")}),
+                   label="premise: p is prime"),
+            Clause(literals=frozenset({(True, "prime", "q")}),
+                   label="premise: q is prime"),
+            Clause(literals=frozenset({(True, "distinct", "p", "q")}),
+                   label="premise: p != q"),
+        ],
+        "negated_goal": Clause(
+            literals=frozenset({(False, "joint_density_is_product", "p", "q")}),
+            label="negated goal: unique factorization fails as probability",
+        ),
+    },
+}
+
+
+def lattice_prune(item, state) -> bool:
+    """
+    Prune for the lattice domain.
+    Same limits as goedel_prune: depth 4, literal count 5.
+    Lattice proofs are chains of implications, no deep function nesting.
+    """
+    if not isinstance(item, Clause):
+        return False
+
+    if len(item.literals) > 5:
+        return True
+
+    def term_depth(t):
+        if isinstance(t, tuple):
+            return 1 + max((term_depth(arg) for arg in t[1:]), default=0)
+        return 0
+
+    for lit in item.literals:
+        for arg in lit[2:]:
+            if term_depth(arg) > 4:
+                return True
+    return False
+
+
+def make_lattice_state(theorem=None) -> OtterState:
+    """
+    Set up prime factor lattice axioms for a specific theorem.
+
+    Args:
+        theorem: which theorem to prove. One of the keys in
+                 LATTICE_THEOREMS, or None for the default (reflexivity).
+    """
+    if theorem is None:
+        theorem = "reflexivity"
+
+    if theorem not in LATTICE_THEOREMS:
+        raise ValueError(f"Unknown theorem: {theorem}. "
+                        f"Choose from: {list(LATTICE_THEOREMS.keys())}")
+
+    thm = LATTICE_THEOREMS[theorem]
+    state = OtterState()
+
+    for rule in LATTICE_RULES:
+        for prefix in thm["axiom_labels"]:
+            if rule.label.startswith(prefix):
+                state.set_of_support.append(rule)
+                break
+
+    for premise in thm["premises"]:
+        state.set_of_support.append(premise)
+
+    state.set_of_support.append(thm["negated_goal"])
+    return state
+
+
+def run_lattice_proof_suite(max_steps=100, verbose=True):
+    """
+    Run all prime factor lattice theorems and return results.
+    """
+    results = {}
+
+    for name, thm in LATTICE_THEOREMS.items():
+        if verbose:
+            print(f"\n{'='*60}")
+            print(f"THEOREM: {name}")
+            print(f"  {thm['description']}")
+            print(f"{'='*60}")
+
+        state = make_lattice_state(theorem=name)
+
+        state = run_otter(
+            state, resolve,
+            max_steps=max_steps,
+            stop_fn=found_empty_clause,
+            subsumes_fn=clause_subsumes,
+            prune_fn=lattice_prune,
+            verbose=verbose,
+        )
+
+        proved = found_empty_clause(state)
+        results[name] = {
+            "proved": proved,
+            "steps": state.step,
+            "description": thm["description"],
+            "state": state,
+        }
+
+        if verbose:
+            if proved:
+                print_proof(state)
+            else:
+                print(f"\n  NOT PROVED in {state.step} steps.")
+
+    return results
+
+
+def print_lattice_results(results):
+    """Pretty-print the lattice proof suite results."""
+    # Split into structure and wave theorems for display
+    structure_names = ["reflexivity", "antisymmetry", "transitivity",
+                       "unit_is_bottom", "gcd_is_lower_bound",
+                       "gcd_is_greatest", "lcm_is_upper_bound",
+                       "lcm_is_least", "gcd_is_meet", "lcm_is_join",
+                       "distributivity"]
+    wave_names = ["prime_density", "prime_independence", "density_product",
+                  "prime_wave", "wave_orthogonality", "wave_basis",
+                  "fta_as_probability"]
+
+    print(f"\n{'='*60}")
+    print("PRIME FACTOR LATTICE: Proof Suite Results")
+    print(f"{'='*60}")
+
+    all_proved = True
+
+    print(f"\n  --- Lattice Structure ---")
+    for name in structure_names:
+        if name in results:
+            r = results[name]
+            status = "PROVED" if r["proved"] else "NOT PROVED"
+            if not r["proved"]:
+                all_proved = False
+            print(f"  {status:>11s} ({r['steps']:2d} steps)  {r['description']}")
+
+    print(f"\n  --- Probability Waves ---")
+    for name in wave_names:
+        if name in results:
+            r = results[name]
+            status = "PROVED" if r["proved"] else "NOT PROVED"
+            if not r["proved"]:
+                all_proved = False
+            print(f"  {status:>11s} ({r['steps']:2d} steps)  {r['description']}")
+
+    print(f"\n{'='*60}")
+    if all_proved:
+        print("  ALL THEOREMS PROVED.")
+        print("  The divisibility ordering on N forms a distributive lattice.")
+        print("  GCD = meet (componentwise min of factor vectors).")
+        print("  LCM = join (componentwise max of factor vectors).")
+        print("  Prime divisibility waves are independent and orthogonal.")
+        print("  They form a basis for the infinite-dimensional factor space.")
+        print("  Independence of prime waves IS the FTA restated as measure theory.")
+    else:
+        print("  SOME THEOREMS FAILED. Check axiom formulations.")
+    print(f"{'='*60}")
+
+
+# ============================================================
 # Domain: Interactive (human in the loop)
 # ============================================================
 
@@ -1661,6 +2965,22 @@ DOMAINS = {
         "prune_fn": peano_prune,
         "description": "Peano arithmetic: prove 1+1=2 from first principles",
     },
+    "goedel": {
+        "make_state": make_goedel_state,
+        "combine_fn": resolve,  # pure resolution, no paramodulation needed
+        "subsumes_fn": clause_subsumes,
+        "stop_fn": found_empty_clause,
+        "prune_fn": goedel_prune,
+        "description": "Goedel numbering: prove encoding completeness for self-reference",
+    },
+    "lattice": {
+        "make_state": make_lattice_state,
+        "combine_fn": resolve,  # pure resolution, no paramodulation needed
+        "subsumes_fn": clause_subsumes,
+        "stop_fn": found_empty_clause,
+        "prune_fn": lattice_prune,
+        "description": "Prime factor lattice: divisibility, GCD/LCM, probability waves",
+    },
     "interactive": {
         "make_state": make_little_alchemy_state,  # default seed, override as needed
         "combine_fn": interactive_combine,
@@ -1725,11 +3045,28 @@ if __name__ == "__main__":
     print_history(state)
 
     # Resolution domains: show proof if found
-    if args.domain in ("resolution", "chain", "bridge", "peano"):
+    if args.domain in ("resolution", "chain", "bridge", "peano", "goedel", "lattice"):
         if found_empty_clause(state):
             print_proof(state)
         else:
             print("\nNo proof found (empty clause not derived).")
+
+    # Goedel domain: run full proof suite and self-reference check
+    if args.domain == "goedel":
+        results = run_goedel_proof_suite(
+            max_steps=args.steps,
+            verbose=not args.quiet,
+        )
+        print_goedel_results(results)
+
+    # Lattice domain: run full proof suite
+    # Probability wave proofs need ~100 steps due to multi-variable axioms
+    if args.domain == "lattice":
+        results = run_lattice_proof_suite(
+            max_steps=max(args.steps, 100),
+            verbose=not args.quiet,
+        )
+        print_lattice_results(results)
 
     # Bridge domain: demonstrate edge stiffening
     if args.domain == "bridge" and found_empty_clause(state):

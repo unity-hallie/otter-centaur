@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+*.pyo
+.hypothesis/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+otter_state.json
+*.dot
