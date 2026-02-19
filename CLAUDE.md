@@ -3,12 +3,31 @@
 ## What this is
 
 A generalization of the Otter theorem prover's main loop as a pluggable
-combinatorial search algorithm, extended with edge-first knowledge graphs,
-conditional proofs, and a causal encoding that connects prime factorization
-to causal structure.
+combinatorial search algorithm, extended with edge-first knowledge graphs
+and a causal encoding that turns cause-and-effect into number theory.
 
 Based on Johnicholas Hines' formulation of the Otter main loop.
 Extended by Hallie Larsson with edge-first knowledge graph concepts.
+
+## The core idea (for newcomers)
+
+Give every event in a causal chain its own prime number. Then define
+each event's code as its prime times the codes of everything that caused it:
+
+    gn(E) = p_E × ∏ gn(causes of E)
+
+Now arithmetic *is* causation:
+
+- **A caused B?** Check if gn(A) divides gn(B). That's it.
+- **Shared history?** Compute gcd(gn(A), gn(B)). The prime factors
+  are exactly the common ancestors.
+- **Combined future?** Compute lcm(gn(A), gn(B)). It encodes the
+  minimal event downstream of both.
+
+This is not a metaphor. It is the Fundamental Theorem of Arithmetic
+applied to causal structure. Every DAG gets a unique, injective encoding.
+The divisibility lattice of the natural numbers becomes a calculus of
+causation. See `domains/causal_encoding.py`.
 
 ## Running
 
@@ -50,14 +69,14 @@ Discoverable: `grep -r "SPICES" otter/`
   than the evidence supports. Monotone tracking, Cauchy convergence
   certificates, honest limit estimation.
 
-## Reading order (for newcomers)
+## Reading order
 
 1. `core/engine.py` (157 lines) — the Otter main loop. Start here.
 2. `core/state.py` (230 lines) — Item, Edge, Clause, OtterState.
 3. `conditional_proof.py` (191 lines) — the ex falso guard.
 4. A domain of your choice — `domains/little_alchemy.py` is the simplest.
-5. `causal_calculus.py` — convergent proofs, zeta connection, self-reference.
-6. `domains/causal_encoding.py` — Hilbert space, interference, Born rule.
+5. `domains/causal_encoding.py` — the causal encoding (the core idea above).
+6. `causal_calculus.py` — convergent proofs, zeta connection, self-reference.
 
 ## Architecture
 
@@ -67,9 +86,9 @@ Discoverable: `grep -r "SPICES" otter/`
   `core/bridge.py` connects them. `stiffen_edges()` raises proven edges to confidence 1.0.
 - **Conditional proofs**: `conditional_proof.py` guards against ex falso and confidence laundering.
 - **Convergent proofs**: `causal_calculus.py` tracks confidence as evidence accumulates.
-- **Causal encoding**: `domains/causal_encoding.py` constructs a Hilbert space from prime
-  factorization vectors, demonstrates path interference, and invokes Gleason's theorem
-  for the Born rule.
+- **Causal encoding**: `domains/causal_encoding.py` encodes causal DAGs into the
+  natural numbers so that divisibility = causality. Then explores what happens
+  when you put complex amplitudes on this structure.
 
 ## Domains
 
@@ -81,10 +100,14 @@ Four domains are special-cased in `__main__.py` with their own control flow:
 zeta, self-ref, causal_encoding (each bypass the Otter loop), and llm (uses
 Claude API as combine_fn).
 
-## Open gaps (honest accounting)
+## What is established and what is not
 
-The causal encoding constructs a Hilbert space from prime factorization
-vectors. Four gaps were identified. Two are partially closed, two remain open:
+The causal encoding (divisibility = causality) is proved by construction.
+It is the diamond-hard core of the project.
+
+On top of the encoding, `causal_encoding.py` explores what happens when you
+assign complex amplitudes (Euler factors) and ask about probabilities and
+interference. This is where the gaps live:
 
 - **Gap 1** (open): The Euler factor amplitude is defined, not derived from
   causal structure. Why this specific complex function?
