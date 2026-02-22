@@ -25,6 +25,9 @@ from pytest import approx
 from otter.domains.causal_encoding import (
     CausalDAG,
     CausalEncoding,
+    SymbolicEncoding,
+    subdag,
+    verify_gauge_computation,
     demo_linear_chain,
     demo_diamond,
     demo_spacetime_patch,
@@ -815,3 +818,234 @@ class TestFrameInvariance:
         diffs = [abs(probs0[n] - probs2[n]) for n in ['A', 'B', 'C', 'D']]
         assert max(diffs) > 0.01, \
             "Expected different Born probabilities in different frames"
+
+
+# -- Property 10: Gauge computation ----------------------------------------
+
+class TestGaugeComputation:
+    """
+    Property 10: The Gram matrix is computable without choosing primes,
+    and independently encoded sub-DAGs produce consistent local Gram matrices.
+
+    This is Property 9 used as a computational tool.
+    """
+
+    # --- Symbolic basics (P10a: deferred assignment) ---
+
+    def test_symbolic_path_count_matches_concrete(self):
+        """SymbolicEncoding path counts match CausalEncoding."""
+        dag = _make_diamond()
+        sym = SymbolicEncoding(dag)
+        enc = CausalEncoding(dag)
+        for anc in dag.events:
+            for desc in dag.events:
+                assert sym.path_count(anc, desc) == enc.path_count(anc, desc)
+
+    def test_symbolic_gram_matches_coordinate_free(self):
+        """SymbolicEncoding Gram matrix matches coordinate_free_gram."""
+        dag = _make_diamond()
+        sym = SymbolicEncoding(dag)
+        G_sym = sym.gram_matrix()['matrix']
+        G_free = coordinate_free_gram(dag)['matrix']
+        for key in G_free:
+            assert G_sym[key] == G_free[key]
+
+    def test_symbolic_gram_matches_any_encoding(self):
+        """SymbolicEncoding Gram matrix matches gram_matrix on spacetime DAG."""
+        dag = _make_spacetime()
+        sym = SymbolicEncoding(dag)
+        enc = CausalEncoding(dag)
+        G_sym = sym.gram_matrix()['matrix']
+        G_enc = gram_matrix(enc)['matrix']
+        names = dag.topological_order()
+        for a in names:
+            for b in names:
+                assert G_sym[(a, b)] == G_enc[(a, b)]
+
+    def test_symbolic_overlap_matches_concrete(self):
+        """SymbolicEncoding overlaps match causal_overlap."""
+        dag = _make_diamond()
+        sym = SymbolicEncoding(dag)
+        enc = CausalEncoding(dag)
+        for a in dag.events:
+            for b in dag.events:
+                assert sym.overlap(a, b) == approx(causal_overlap(enc, a, b))
+
+    def test_symbolic_norm_matches_concrete(self):
+        """SymbolicEncoding norms match causal_hilbert_product."""
+        dag = _make_diamond()
+        sym = SymbolicEncoding(dag)
+        enc = CausalEncoding(dag)
+        for name in dag.events:
+            assert sym.norm_sq(name) == causal_hilbert_product(enc, name, name)
+
+    def test_symbolic_caching(self):
+        """Path counts and Gram matrix are cached after first computation."""
+        dag = _make_diamond()
+        sym = SymbolicEncoding(dag)
+        _ = sym.path_count('A', 'D')
+        assert ('A', 'D') in sym._path_cache
+        assert sym.path_count('A', 'D') == 2  # A->B->D and A->C->D
+
+        G1 = sym.gram_matrix()
+        G2 = sym.gram_matrix()
+        assert G1 is G2  # Same object, cached
+
+    # --- Materialization (P10a → concrete) ---
+
+    def test_materialize_default(self):
+        """Default materialization matches standard CausalEncoding."""
+        dag = _make_diamond()
+        sym = SymbolicEncoding(dag)
+        enc_sym = sym.materialize()
+        enc_std = CausalEncoding(dag)
+        for name in dag.events:
+            assert enc_sym.gn(name) == enc_std.gn(name)
+
+    def test_materialize_custom_primes(self):
+        """Custom primes produce a valid encoding with correct causality."""
+        dag = _make_diamond()
+        sym = SymbolicEncoding(dag)
+        custom = {'A': 7, 'B': 11, 'C': 13, 'D': 17}
+        enc = sym.materialize(primes=custom)
+        # Causality preserved
+        assert enc.causes('A', 'B')
+        assert enc.causes('A', 'C')
+        assert enc.causes('A', 'D')
+        assert enc.causes('B', 'D')
+        assert enc.causes('C', 'D')
+        assert not enc.causes('B', 'A')
+        assert not enc.causes('B', 'C')
+
+    def test_materialize_custom_gram_invariant(self):
+        """Custom primes produce the same Gram matrix (Property 9)."""
+        dag = _make_diamond()
+        sym = SymbolicEncoding(dag)
+        G_sym = sym.gram_matrix()['matrix']
+
+        custom = {'A': 7, 'B': 11, 'C': 13, 'D': 17}
+        enc = sym.materialize(primes=custom)
+        G_enc = gram_matrix(enc)['matrix']
+
+        for key in G_sym:
+            assert G_sym[key] == G_enc[key]
+
+    # --- Sub-DAG decomposition (P10b: local encoding) ---
+
+    def test_subdag_preserves_structure(self):
+        """subdag extracts correct events and causes."""
+        dag = _make_diamond()
+        sub = subdag(dag, {'A', 'B', 'D'})
+        assert 'A' in sub.events
+        assert 'B' in sub.events
+        assert 'D' in sub.events
+        assert 'C' not in sub.events
+        assert sub.events['B'].causes == frozenset(['A'])
+        # D's cause C was excluded, only B remains
+        assert sub.events['D'].causes == frozenset(['B'])
+
+    def test_subdag_root_promotion(self):
+        """Events whose causes are outside the subset become roots."""
+        dag = _make_diamond()
+        sub = subdag(dag, {'B', 'C', 'D'})
+        # B and C had cause A, but A is not in subset -> they become roots
+        assert sub.events['B'].causes == frozenset()
+        assert sub.events['C'].causes == frozenset()
+
+    def test_subdag_path_counts_are_local(self):
+        """
+        The honesty test: sub-DAG path counts differ from full DAG
+        when paths through excluded events are lost.
+
+        In the full diamond, paths(A, D) = 2 (through B and through C).
+        In sub-DAG {A, B, D}, paths(A, D) = 1 (only through B).
+
+        This is not a bug. It is the thing to be honest about.
+        Local geometry is correct within each piece.
+        Full geometry requires the full structure.
+        Neither requires specific primes.
+        """
+        dag = _make_diamond()
+
+        # Full DAG: 2 paths from A to D
+        sym_full = SymbolicEncoding(dag)
+        assert sym_full.path_count('A', 'D') == 2
+
+        # Sub-DAG {A, B, D}: only 1 path from A to D
+        sub = subdag(dag, {'A', 'B', 'D'})
+        sym_sub = SymbolicEncoding(sub)
+        assert sym_sub.path_count('A', 'D') == 1
+
+        # Therefore G(A,D) differs between full and sub
+        G_full = sym_full.gram_matrix()['matrix']
+        G_sub = sym_sub.gram_matrix()['matrix']
+        assert G_full[('A', 'D')] != G_sub[('A', 'D')]
+
+        # But roots have the same self-norm in both
+        # (A is a root in both, with no ancestors)
+        assert G_full[('A', 'A')] == G_sub[('A', 'A')]
+
+    # --- Independent encoding (P10b+c: merge) ---
+
+    def test_independent_encodings_local_gram_correct(self):
+        """Random primes on a sub-DAG produce the correct local Gram matrix."""
+        dag = _make_spacetime()
+        sub = subdag(dag, {'past_1', 'past_2', 'now'})
+        report = verify_gauge_computation(dag, [{'past_1', 'past_2', 'now'}])
+        assert report['all_match']
+
+    def test_parallel_workers_different_primes(self):
+        """
+        Two workers encode overlapping sub-DAGs with completely different
+        primes. Both produce correct local Gram matrices.
+
+        This is the test that proves P10 is not just P9 restated:
+        it is P9 used as a computational strategy.
+        """
+        dag = _make_spacetime()
+
+        # Worker 1: {past_1, past_2, now} with primes {2, 3, 5}
+        sub1 = subdag(dag, {'past_1', 'past_2', 'now'})
+        sym1 = SymbolicEncoding(sub1)
+        enc1 = sym1.materialize(primes={'past_1': 2, 'past_2': 3, 'now': 5})
+
+        # Worker 2: {past_2, other, now, future} with primes {7, 11, 13, 17}
+        sub2 = subdag(dag, {'past_2', 'other', 'now', 'future'})
+        sym2 = SymbolicEncoding(sub2)
+        enc2 = sym2.materialize(primes={
+            'past_2': 7, 'other': 11, 'now': 13, 'future': 17,
+        })
+
+        # Both workers' Gram matrices match their coordinate-free references
+        G1 = gram_matrix(enc1)['matrix']
+        G1_ref = coordinate_free_gram(sub1)['matrix']
+        for a in sub1.events:
+            for b in sub1.events:
+                assert G1[(a, b)] == G1_ref[(a, b)]
+
+        G2 = gram_matrix(enc2)['matrix']
+        G2_ref = coordinate_free_gram(sub2)['matrix']
+        for a in sub2.events:
+            for b in sub2.events:
+                assert G2[(a, b)] == G2_ref[(a, b)]
+
+    @pytest.mark.parametrize("dag_factory", [
+        _make_linear, _make_diamond, _make_spacetime,
+    ])
+    def test_verify_gauge_computation_parametrized(self, dag_factory):
+        """Gauge computation verified across different DAG topologies."""
+        dag = dag_factory()
+        names = list(dag.events.keys())
+        # Partition into individual events (trivial but valid)
+        partition = [{n} for n in names]
+        report = verify_gauge_computation(dag, partition)
+        assert report['all_match']
+
+    def test_verify_gauge_computation_nontrivial(self):
+        """Non-trivial overlapping partition of spacetime DAG."""
+        dag = _make_spacetime()
+        report = verify_gauge_computation(dag, [
+            {'past_1', 'past_2', 'now'},
+            {'past_2', 'other', 'now', 'future'},
+        ])
+        assert report['all_match']

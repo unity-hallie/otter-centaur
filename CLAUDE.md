@@ -105,8 +105,10 @@ Claude API as combine_fn).
 The causal encoding (divisibility = causality) is proved by construction.
 It is the diamond-hard core of the project. The diamond-hard properties:
 exponents count paths (P6), inner products count correlated path pairs (P7),
-the cone angle converges to √((k-1)/k) (P8), and the Gram matrix is
-invariant under any prime assignment (P9). All proved, no gaps.
+the cone angle converges to √((k-1)/k) (P8), the Gram matrix is
+invariant under any prime assignment (P9), and the gauge can be deferred,
+localized, and independently chosen without affecting causal geometry (P10).
+All proved, no gaps.
 
 On top of the encoding, `causal_encoding.py` explores what happens when you
 assign complex amplitudes (Euler factors) and ask about probabilities and

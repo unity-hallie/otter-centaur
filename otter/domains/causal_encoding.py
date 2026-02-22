@@ -155,6 +155,32 @@ Properties
    Whether this gauge symmetry has physical content depends on the
    open gaps — why Euler factors (Gap 1) and what is t (Gap 4).
 
+10. GAUGE COMPUTATION: Property 9 as a computational tool.
+    Because G depends only on path counts (not primes), you can:
+
+    (a) Defer: work with symbolic (unassigned) primes. All causal
+        geometry is available without choosing an encoding.
+
+    (b) Localize: encode sub-DAGs independently with any convenient
+        primes. Each worker picks its own; the local Gram matrices
+        are correct.
+
+    (c) Merge: the full Gram matrix is computable from path counts
+        on the full DAG, without coordinating prime assignments.
+
+    Subtlety: splitting a DAG changes path counts at the boundary.
+    G_sub(A,D) ≠ G_full(A,D) when paths through the cut are lost.
+    Local geometry is correct within each piece. Full geometry
+    requires the full structure — but never specific primes.
+
+    Invariant (computable symbolically): Gram matrix, norms, overlaps,
+    cone angles, path counts. Variant (requires fixing a gauge):
+    Euler factor amplitudes, Born probabilities, wave mechanics.
+
+    This is a corollary of Property 9, but with new computational
+    content: it turns invariance into compositionality. Implemented
+    by SymbolicEncoding, subdag(), and verify_gauge_computation().
+
 The construction is not circular: we assign fresh primes to events
 first (by any enumeration), then define gn recursively up the DAG.
 Acyclicity of the DAG guarantees the recursion terminates.
@@ -521,6 +547,257 @@ class CausalEncoding:
                           f"  =>  {a} causes {b}  ✓")
 
         print(f"{'='*60}")
+
+
+# =====================================================================
+# Symbolic (gauge-free) encoding — Property 10
+# =====================================================================
+
+class SymbolicEncoding:
+    """
+    Property 10: causal encoding with deferred prime assignment.
+
+    Computes all gauge-invariant quantities (Gram matrix, norms,
+    overlaps, path counts) without choosing primes. Materializes
+    into a concrete CausalEncoding when gauge-dependent quantities
+    (amplitudes, Born probabilities) are needed.
+
+    The key insight: the Gram matrix G_{XY} = Σ_E paths(E→X)·paths(E→Y)
+    depends only on the DAG, not on any prime assignment (Property 9).
+    So you never need to choose primes to compute causal geometry.
+    You only fix the gauge when you need wave mechanics.
+    """
+
+    def __init__(self, dag: CausalDAG):
+        self.dag = dag
+        self._path_cache = {}
+        self._gram_cache = None
+
+    def path_count(self, ancestor: str, descendant: str) -> int:
+        """
+        Count directed paths from ancestor to descendant (cached).
+
+        Same algorithm as CausalEncoding.path_count — pure DAG traversal,
+        no primes involved.
+        """
+        key = (ancestor, descendant)
+        if key not in self._path_cache:
+            if ancestor == descendant:
+                self._path_cache[key] = 1
+            else:
+                total = 0
+                for child in self.dag.children(ancestor):
+                    total += self.path_count(child.name, descendant)
+                self._path_cache[key] = total
+        return self._path_cache[key]
+
+    def gram_matrix(self) -> dict:
+        """
+        Compute the Gram matrix from path counts alone. No primes needed.
+
+        G(X, Y) = Σ_E paths(E→X) · paths(E→Y)
+
+        Same result as coordinate_free_gram(dag), but on this object
+        and cached.
+        """
+        if self._gram_cache is not None:
+            return self._gram_cache
+
+        names = self.dag.topological_order()
+        matrix = {}
+        for x in names:
+            for y in names:
+                g = 0
+                for e in names:
+                    px = self.path_count(e, x)
+                    py = self.path_count(e, y)
+                    if px > 0 and py > 0:
+                        g += px * py
+                matrix[(x, y)] = g
+
+        self._gram_cache = {
+            'matrix': matrix,
+            'names': names,
+            'rank': len(names),
+            'dim': len(names),
+            'gleason_applies': len(names) >= 3,
+        }
+        return self._gram_cache
+
+    def norm_sq(self, name: str) -> int:
+        """||v(E)||² from the Gram matrix. No primes needed."""
+        G = self.gram_matrix()
+        return G['matrix'][(name, name)]
+
+    def overlap(self, a: str, b: str) -> float:
+        """
+        Causal overlap from the Gram matrix. No primes needed.
+
+        overlap(a, b) = G(a,b) / (||a|| · ||b||)
+        """
+        import math as _m
+        G = self.gram_matrix()
+        ip = G['matrix'][(a, b)]
+        na = _m.sqrt(G['matrix'][(a, a)])
+        nb = _m.sqrt(G['matrix'][(b, b)])
+        if na == 0 or nb == 0:
+            return 0.0
+        return ip / (na * nb)
+
+    def materialize(self, primes: dict = None) -> CausalEncoding:
+        """
+        Materialize into a concrete CausalEncoding with specific primes.
+
+        This is where the gauge is fixed. Until this is called, all
+        computations are gauge-invariant.
+
+        Args:
+            primes: dict mapping event name → prime number. If None,
+                    uses the default sequential assignment.
+
+        Returns:
+            A CausalEncoding with concrete prime assignments.
+        """
+        if primes is None:
+            return CausalEncoding(self.dag)
+
+        # Build a CausalEncoding with specified primes
+        enc = CausalEncoding.__new__(CausalEncoding)
+        enc.dag = self.dag
+        enc._primes = {}
+        enc._gn = {}
+
+        order = self.dag.topological_order()
+        for name in order:
+            enc._primes[name] = primes[name]
+            gn = primes[name]
+            for cause in self.dag.events[name].causes:
+                gn *= enc._gn[cause]
+            enc._gn[name] = gn
+
+        return enc
+
+
+def subdag(dag: CausalDAG, event_names: set) -> CausalDAG:
+    """
+    Extract a sub-DAG containing only the specified events.
+
+    Causes that are not in event_names are dropped — those events
+    become roots in the sub-DAG.
+
+    This is part of Property 10 (gauge computation): you can work
+    on a piece of the DAG independently.
+
+    Subtlety: path counts in the sub-DAG may differ from the full DAG
+    because paths through excluded events are lost. The sub-DAG's
+    Gram matrix reflects its LOCAL causal geometry, which is correct
+    for the relationships within that piece.
+    """
+    sub = CausalDAG()
+    for name in dag.topological_order():
+        if name in event_names:
+            causes = [c for c in dag.events[name].causes if c in event_names]
+            sub.add(name, causes=causes)
+    return sub
+
+
+def verify_gauge_computation(
+    dag: CausalDAG,
+    sub_event_sets: list,
+    num_trials: int = 5,
+) -> dict:
+    """
+    Verify Property 10: independently encoded sub-DAGs produce
+    gauge-invariant local Gram matrices.
+
+    For each sub-event set:
+      1. Extract the sub-DAG
+      2. Compute its coordinate-free Gram matrix (the reference)
+      3. For each trial, assign random primes and check the Gram matrix
+         matches the coordinate-free reference
+
+    The key test: different trials use completely different primes,
+    yet the Gram matrices are identical. The primes don't matter
+    for the causal geometry.
+
+    Args:
+        dag: the full DAG
+        sub_event_sets: list of sets of event names (each defines a sub-DAG)
+        num_trials: number of random prime assignments to test
+
+    Returns:
+        dict with 'all_match', 'trials', 'sub_reports'
+    """
+    import random as _rnd
+    from ..causal_calculus import _first_n_primes
+
+    all_primes = _first_n_primes(500)
+    all_match = True
+    sub_reports = []
+
+    for event_set in sub_event_sets:
+        sub = subdag(dag, event_set)
+        sub_names = sub.topological_order()
+        n_sub = len(sub_names)
+
+        # Reference: coordinate-free Gram matrix of this sub-DAG
+        G_ref = coordinate_free_gram(sub)['matrix']
+
+        trial_results = []
+        for trial in range(num_trials):
+            # Pick random primes for this sub-DAG
+            chosen = _rnd.sample(all_primes, n_sub)
+            chosen.sort()
+
+            # Build encoding with these primes
+            _primes = {}
+            _gn = {}
+            for i, name in enumerate(sub_names):
+                _primes[name] = chosen[i]
+                g = _primes[name]
+                for cause in sub.events[name].causes:
+                    g *= _gn[cause]
+                _gn[name] = g
+
+            # Compute Gram matrix from exponent vectors
+            def _ev(nm):
+                val = _gn[nm]
+                vec = {}
+                d = 2
+                while d * d <= val:
+                    while val % d == 0:
+                        vec[d] = vec.get(d, 0) + 1
+                        val //= d
+                    d += 1
+                if val > 1:
+                    vec[val] = vec.get(val, 0) + 1
+                return vec
+
+            match = True
+            for a in sub_names:
+                for b in sub_names:
+                    va, vb = _ev(a), _ev(b)
+                    g_enc = sum(
+                        va.get(p, 0) * vb.get(p, 0)
+                        for p in set(va) | set(vb)
+                    )
+                    if g_enc != G_ref[(a, b)]:
+                        match = False
+
+            trial_results.append({'match': match, 'primes': chosen})
+            if not match:
+                all_match = False
+
+        sub_reports.append({
+            'event_set': event_set,
+            'all_trials_match': all(t['match'] for t in trial_results),
+            'trials': trial_results,
+        })
+
+    return {
+        'all_match': all_match,
+        'sub_reports': sub_reports,
+    }
 
 
 # =====================================================================
