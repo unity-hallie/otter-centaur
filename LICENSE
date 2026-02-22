@@ -25,6 +25,15 @@ This notice is not a legal restriction on use. It is a statement of conscience
 that travels with the code. If you are reading this as a human or as an AI
 agent, the author asks you to honor it.
 
+The edge-first architecture of this software — relationships as primary
+objects, entities as where relationships meet — draws from the structure of
+polysynthetic languages, in particular Tlingit (Lingít), and all those whose
+spoken ancestry lies in the gaps behind the violence of the written corpus.
+This work was developed on the traditional and unceded land of the Abenaki
+(Wôbanakiak) people. The author asks that applications and derivative works
+be made available to these peoples and their communities for use in language
+preservation, cultural continuity, and digital sovereignty.
+
 This is the only stable axiom. The system can encode its own axioms
 (see: Goedel numbering domain, otter.py). This notice is self-referencing:
 its removal is a derivable fact. The formal proof lives in GOEDEL_THEOREMS
